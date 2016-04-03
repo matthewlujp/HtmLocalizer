@@ -1,11 +1,17 @@
 package com.example.luning.htmlocalizer;
 
+import android.content.ContentValues;
 import android.content.Context;
+import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteOpenHelper;
+import android.graphics.Bitmap;
 import android.os.AsyncTask;
 import android.os.Handler;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.KeyEvent;
 import android.view.View;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -17,6 +23,7 @@ import android.widget.EditText;
 import android.widget.Spinner;
 import android.widget.Toast;
 
+import com.android.volley.ExecutorDelivery;
 import com.android.volley.Request;
 import com.android.volley.RequestQueue;
 import com.android.volley.Response;
@@ -24,36 +31,91 @@ import com.android.volley.VolleyError;
 import com.android.volley.toolbox.StringRequest;
 import com.android.volley.toolbox.Volley;
 
-import java.io.BufferedReader;
-import java.io.EOFException;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
-import java.io.OutputStreamWriter;
-import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class MainActivity extends AppCompatActivity {
     public final static String FILE_LIST = "SAVED_FILE_LIST";
-    private final String homePage = "http://google.com";
+    private final String homePage = "https://www.google.co.jp/";
     private final Handler mHandler = new Handler();
     private Context mContext;
     private Spinner savedPageSpinner;
-    private Button goBtn, crawlBtn;
+    private Button goBtn, crawlBtn, backBtn, forwardBtn;
     private EditText urlBox;
-    private ArrayList<String> savedFileNames, spinnerTitleList;
-    private ArrayAdapter<String> spinnerArrayAdapter;
+    private ArrayList<StringAndMeta> spinnerTitleList;
+    private ArrayAdapter<StringAndMeta> spinnerArrayAdapter;
     private WebView mWebView;
     private RequestQueue mRequestQueue;
     private Boolean runSearch = false;
+    private long saveAmountLimit = 500, crawledAmountLimit = 500;
+    private long crawledAndSavedPages = 0;
+
+    private static final String DB_NAME = "PAGES_DB";
+    private static final String DB_TABLE = "PAGES_CONTENT_TABLE";
+    private static final int DB_VERSION = 1;
+    private SQLiteDatabase mDB;
+
+    // Data Base Helper
+    private static class DBHelper extends SQLiteOpenHelper {
+        public DBHelper(Context context) {
+            super(context, DB_NAME, null, DB_VERSION);
+        }
+
+        @Override
+        public void onCreate(SQLiteDatabase db) {
+            db.execSQL("create table if not exists " +
+                    DB_TABLE + "(" +
+                    "id integer primary key autoincrement," +
+                    "title text," +
+                    "url text not null unique," +
+                    "domain text not null," +
+                    "is_main boolean not null," +
+                    "content text" +
+                    ")");
+        }
+
+        @Override
+        public void onUpgrade(SQLiteDatabase db, int oldVer, int newVer) {
+            db.execSQL("drop table if exists " + DB_TABLE);
+            onCreate(db);
+        }
+    }
+
+
+    private static class StringAndMeta {
+        private String mTitle, mMeta;
+
+        public StringAndMeta(String title, String meta) {
+            mTitle = title;
+            mMeta = meta;
+        }
+
+        public String getTitle() {
+            return mTitle;
+        }
+
+        public void setTitle(String title) {
+            this.mTitle = mTitle;
+        }
+
+        public String getMeta() {
+            return mMeta;
+        }
+
+        public void setMeta(String meta) {
+            this.mMeta = mMeta;
+        }
+
+        @Override
+        public String toString() {
+            return mTitle;
+
+        }
+    }
+
 
     @Override
     protected void onCreate(final Bundle savedInstanceState) {
@@ -65,37 +127,23 @@ public class MainActivity extends AppCompatActivity {
         // Create RequestQueue
         mRequestQueue = new Volley().newRequestQueue(MainActivity.this);
 
+        // Get database object
+        DBHelper dbHelper = new DBHelper(this);
+        mDB = dbHelper.getWritableDatabase();
+
         // Read the list of saved pages
-        new AsyncTask<String, Void, ArrayList<String>>() {
+        new AsyncTask<String, Void, ArrayList<StringAndMeta>>() {
             @Override
-            protected ArrayList<String> doInBackground(String... params) {
-                ArrayList<String> fileNames = null;
-                try {
-                    File listFile = new File(mContext.getFilesDir(), FILE_LIST);
-                    FileInputStream is = new FileInputStream(listFile);
-                    ObjectInputStream ois = new ObjectInputStream(is);
-                    fileNames = (ArrayList<String>) ois.readObject();
-                    ois.close();
-                    is.close();
-                } catch (FileNotFoundException e) {
-                    fileNames = new ArrayList<String>();
-                } catch (EOFException e) {
-                    Log.e("onCreate", e.toString());
-                    fileNames = new ArrayList<String>();
-                } catch (Exception e) {
-                    Log.e("onCreate", e.toString());
-                    System.exit(-1);
-                }
-                return fileNames;
+            protected ArrayList<StringAndMeta> doInBackground(String... params) {
+                return getMainPages();
             }
 
             @Override
-            protected void onPostExecute(ArrayList<String> fileNames) {
-                savedFileNames = fileNames;
-                spinnerTitleList = new ArrayList<String>(fileNames);
-                spinnerTitleList.add(0, "Home");
-                spinnerTitleList.add(0, "");
-                spinnerArrayAdapter = new ArrayAdapter<String>(
+            protected void onPostExecute(ArrayList<StringAndMeta> titles) {
+                spinnerTitleList = new ArrayList<StringAndMeta>(titles);
+                spinnerTitleList.add(0, new StringAndMeta("Home", homePage));
+                spinnerTitleList.add(0, new StringAndMeta("", ""));
+                spinnerArrayAdapter = new ArrayAdapter<StringAndMeta>(
                         mContext, R.layout.spinner_item, spinnerTitleList);
                 spinnerArrayAdapter.setDropDownViewResource(R.layout.spinner_dropdown_item);
                 savedPageSpinner = (Spinner)findViewById(R.id.saved_pages_spr);
@@ -106,9 +154,12 @@ public class MainActivity extends AppCompatActivity {
                         if (pos == 0) {
                             // Do nothing
                         } else if (pos == 1) {
-                            mWebView.loadUrl(homePage);
+                            mWebView.loadUrl(((StringAndMeta) parent.getItemAtPosition(pos)).getMeta());
                         } else {
-                            openPage(parent.getItemAtPosition(pos).toString());
+                            StringAndMeta pm = (StringAndMeta) parent.getItemAtPosition(pos);
+                            String strHtml = getContent(pm.getMeta());
+                            mWebView.loadDataWithBaseURL(pm.getMeta(), strHtml, "text/html", "UTF-8", "");
+                            //mWebView.loadData(strHtml, "text/html", "UTF-8");
                         }
                     }
 
@@ -128,15 +179,61 @@ public class MainActivity extends AppCompatActivity {
 
         mWebView.setWebViewClient(new WebViewClient() {
             @Override
-            public boolean shouldOverrideUrlLoading(WebView view, String strUrl) {
-                // Don't use external browser
-                return false;
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                String pageContent = getContent(url);
+                if (pageContent.equals("")) {
+                    return false;
+                } else {
+                    mWebView.loadDataWithBaseURL(url, pageContent, "text/html", "UTF-8", null);
+                    return true;
+                }
+            }
+
+            @Override
+            public void onPageStarted(WebView view, String url, Bitmap favicon) {
+                // Set accurate url on load complete
+                urlBox.setText(url);
+                // Disable back button if unable to go back
+                backBtn.setEnabled(view.canGoBack());
+                // Disable forward button if unable to go forward
+                forwardBtn.setEnabled(view.canGoForward());
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
             }
         });
         mWebView.loadUrl(homePage);
 
         goBtn = (Button)findViewById(R.id.goBtn);
         urlBox = (EditText)findViewById(R.id.urlBox);
+        urlBox.setOnKeyListener(new View.OnKeyListener() {
+            // Enter key = Go
+            public boolean onKey(View v, int keyCode, KeyEvent event) {
+                // If the event is a key-down event on the "enter" button
+                if ((event.getAction() == KeyEvent.ACTION_DOWN) &&
+                        (keyCode == KeyEvent.KEYCODE_ENTER)) {
+                    String strUrl = urlBox.getText().toString();
+                    if (!strUrl.equals("")) {
+                        mWebView.loadUrl(completeURL(strUrl));
+                    }
+                    return true;
+                }
+                return false;
+            }
+        });
+
+        urlBox.setOnFocusChangeListener(new View.OnFocusChangeListener() {
+            @Override
+            public void onFocusChange(View v, boolean hasFocus) {
+                if (hasFocus) {
+                    if (urlBox.getText().toString().equals("")) {
+                        urlBox.setText(mWebView.getUrl());
+                    }
+                    urlBox.selectAll();
+                }
+            }
+        });
 
         goBtn.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -156,16 +253,39 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onClick(View v) {
                 //runSearch = true;
+                crawledAndSavedPages = 0;
                 ArrayList<URL> visitedList = new ArrayList<URL>();
                 Log.e("crawlClick", String.valueOf(visitedList.size()));
                 try {
                     Log.e("crawlClick", "CRAWL button pressed");
-                    URL startURL = new URL(urlBox.getText().toString());
+                    String strStartUrl = urlBox.getText().toString();
+                    if (strStartUrl.equals("")) {
+                        strStartUrl = mWebView.getUrl();
+                    }
+                    URL startURL = new URL(strStartUrl);
                     Page startPage = new Page(startURL);
                     crawl(startPage, startPage, visitedList);
                 } catch (Exception e) {
                     Log.e("crawlClick", e.toString());
                 }
+            }
+        });
+
+        backBtn = (Button)findViewById(R.id.backBtn);
+        backBtn.setEnabled(false);
+        backBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                mWebView.goBack();
+            }
+        });
+
+        forwardBtn = (Button)findViewById(R.id.forwardBtn);
+        forwardBtn.setEnabled(false);
+        forwardBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                mWebView.goForward();
             }
         });
     }
@@ -180,6 +300,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     protected void crawl(final Page page, final Page orgPage, final ArrayList<URL> visitedLinks) {
+        if (crawledAndSavedPages > saveAmountLimit || visitedLinks.size() > crawledAmountLimit) {
+            return;
+        }
         Log.e("visitedLinks", String.valueOf(visitedLinks.size()));
         if (visitedLinks.indexOf(page.getPageUrl()) >= 0) {
             Log.e("crawl", "Already visited.");
@@ -191,10 +314,9 @@ public class MainActivity extends AppCompatActivity {
                     @Override
                     public void onResponse(final String response) {
                         page.setContentText(response);
-                        String fileName = savePage(page);
-                        pushSavedFileName(fileName);
-                        modifySpinner(fileName);
-                        if (orgPage.domainEqual(page)) {
+                        savePage(page, page.equals(orgPage));
+                        Log.e("savedPages", String.valueOf(++crawledAndSavedPages));
+                        if (page.domainEqual(orgPage)) {
                             ArrayList<URL> newLinks;
                             try {
                                 newLinks = page.findLinks();
@@ -203,11 +325,9 @@ public class MainActivity extends AppCompatActivity {
                                 newLinks = new ArrayList<URL>();
                             }
                             newLinks.removeAll(visitedLinks);
-                            //Log.e("debug", "New links to check: " + newLinks.size() + " in total.");
-                            //Log.e("debug", "Links removed visited: " + newLinks.toString());
                             for (URL link : newLinks) {
                                 Page newPage = new Page(link);
-                                if (orgPage.domainEqual(newPage)) {
+                                if (newPage.domainEqual(orgPage)) {
                                     crawl(newPage, orgPage, visitedLinks);
                                 }
                             }
@@ -222,141 +342,113 @@ public class MainActivity extends AppCompatActivity {
                 }).setShouldCache(false));
     }
 
-    // Renew file name list
-    protected void pushSavedFileName(String fileName) {
-        savedFileNames.add(fileName);
-        new AsyncTask<Void, Void, Void>() {
-            @Override
-            protected Void doInBackground(Void... params) {
-                File listFile = new File(mContext.getFilesDir(), FILE_LIST);
-                FileOutputStream os = null;
-                ObjectOutputStream oos = null;
-                try {
-                    os = new FileOutputStream(listFile);
-                    oos = new ObjectOutputStream(os);
-                    oos.writeObject(savedFileNames);
-                    oos.close();
-                    os.close();
-                } catch (Exception e) {
-                    Log.e("pushSavedFileName", e.toString());
-                } finally {
-                    try {
-                        if (oos != null) {
-                            oos.close();
-                        }
-                    } catch (Exception e) {
-                        Log.e("pushSavedFileName", e.toString());
-                    } finally {
-                        try {
-                            if (os != null) {
-                                os.close();
-                            }
-                        } catch (Exception e) {
-                            Log.e("pushSavedFileName", e.toString());
-                        }
-                    }
-                }
-                return null;
-            }
 
-            @Override
-            protected void onPostExecute(Void result) {
-                // Do nothing
-            }
-        }.execute();
-    }
-
-    protected void modifySpinner(String newItem) {
-        spinnerTitleList.add(spinnerTitleList.size(), newItem);
+    protected void modifySpinner() {
+        spinnerTitleList = getMainPages();
+        spinnerTitleList.add(new StringAndMeta("Home", homePage));
+        spinnerTitleList.add(new StringAndMeta("", ""));
         spinnerArrayAdapter.notifyDataSetChanged();
     }
 
-    protected String savePage(Page page) {
-        final String fileName = pageSaveTitle(page);
-        /*
-        if (savedFileNames.indexOf(fileName) >= 0) {
-            // Remove the old one
+    protected void savePage(Page page, boolean isMain) {
+        ContentValues values = new ContentValues();
+        values.put("title", page.extractTitle());
+        values.put("url", page.getPageUrl().toString());
+        values.put("domain", page.extractDirectory());
+        values.put("is_main", isMain);
+        values.put("content", page.getContentText());
+        int colNum = mDB.update(DB_TABLE, values, "url=?", new String[]{page.getPageUrl().toString()});
+        if (colNum == 0) {
+            mDB.insert(DB_TABLE, "", values);
         }
-        */
-        new AsyncTask<String, Void, Void>() {
-            @Override
-            protected Void doInBackground(String... params) {
-                OutputStreamWriter os = null;
-                try {
-                    /*
-                    FileOutputStream os = new FileOutputStream(file);
-                    */
-                    os = new OutputStreamWriter(mContext.openFileOutput(fileName, Context.MODE_PRIVATE));
-                    os.write(params[0]);
-                    pushSavedFileName(fileName);
-                } catch (Exception e) {
-                    Log.e("savePage", e.toString());
-                } finally {
-                    try {
-                        if (os != null) {
-                            os.close();
-                        }
-                    } catch (Exception e) {
-                        Log.e("savePage", e.toString());
-                    }
-                }
-                return null;
-            }
-
-            @Override
-            protected void onPostExecute(Void result) { /* Do nothing */ };
-        }.execute(page.getContentText());
-        return fileName;
     }
 
-    public void openPage(String pageTitle) {
-        new AsyncTask<String, Void, String>() {
-            @Override
-            protected String doInBackground(String... params) {
-                InputStream inputStream = null;
-                String content;
-                try {
-                    inputStream = openFileInput(params[0]);
-                    InputStreamReader inputStreamReader = new InputStreamReader(inputStream);
-                    BufferedReader bufferedReader = new BufferedReader(inputStreamReader);
-                    String receiveString = "";
-                    StringBuilder stringBuilder = new StringBuilder();
-                    while ( (receiveString = bufferedReader.readLine()) != null ) {
-                        stringBuilder.append(receiveString);
-                    }
-                    content = stringBuilder.toString();
-                    //content = buffer.toString();
-                } catch (Exception e) {
-                    Log.e("openPage", e.toString());
-                    content = "Failed to obtain content.";
-                } finally {
-                    try {
-                        if (inputStream != null) {
-                            inputStream.close();
-                        }
-                    } catch (Exception e) {
-                        Log.e("openPage", e.toString());
-                    }
-                }
-                Log.e("openPage", content);
-                return content;
-            }
-
-            @Override
-            protected void onPostExecute(String result) {
-                mWebView.loadDataWithBaseURL("", result, "text/html", "UTF-8", "");
-            }
-        }.execute(pageTitle);
-    }
-
-    // Used to determine the name of a file when it is saved
-    protected String pageSaveTitle(Page page) {
-        String title = page.extractTitle();
-        if (title.equals("")) {
-            title = page.getPageUrl().toString();
+    protected String getContent(String strUrl) {
+        Cursor cursor = getPageInfo(strUrl, new String[]{"content"});
+        String content;
+        if (cursor == null) {
+            content = "";
+        } else {
+            cursor.moveToFirst();
+            content = cursor.getString(0);
+            cursor.close();
         }
-        return title;
+        return content;
     }
+
+    protected String getTitle(String strUrl) {
+        Cursor cursor = getPageInfo(strUrl, new String[]{"title"});
+        String content;
+        if (cursor == null) {
+            content = "";
+        } else {
+            cursor.moveToFirst();
+            content = cursor.getString(0);
+            cursor.close();
+        }
+        return content;
+    }
+
+    protected Cursor getPageInfo(String strUrl, String[] item) {
+        Cursor cursor = mDB.query(DB_TABLE, item,
+                "url=?", new String[]{strUrl}, null, null, "1");
+        if (cursor.getCount() == 0) {
+            return null;
+        } else {
+            cursor.moveToFirst();
+            return cursor;
+        }
+    }
+
+    protected Cursor getPageInfo(String strUrl) {
+        Cursor cursor = mDB.query(DB_TABLE, null,
+                "url=?", new String[]{strUrl}, null, null, "1");
+        if (cursor.getCount() == 0) {
+            return null;
+        } else {
+            cursor.moveToFirst();
+            return cursor;
+        }
+    }
+
+    protected Cursor getPageInfo(int id) {
+        Cursor cursor = mDB.query(DB_TABLE, null,
+                "id=?", new String[]{String.valueOf(id)}, null, null, "1");
+        if (cursor.getCount() == 0) {
+            return null;
+        } else {
+            cursor.moveToFirst();
+            return cursor;
+        }
+    }
+
+    protected ArrayList<String> getMainPageUrls() {
+        ArrayList<String> mainPages = new ArrayList<String>();
+        Cursor cursor = mDB.query(DB_TABLE, new String[]{"url"}, "is_main=true", null, null, null, "1");
+        while (cursor.moveToNext()) {
+            mainPages.add(new String(cursor.getString(0)));
+        }
+        return mainPages;
+    }
+
+    protected ArrayList<String> getMainPageTitles() {
+        ArrayList<String> mainPages = new ArrayList<String>();
+        Cursor cursor = mDB.query(DB_TABLE, new String[]{"title"}, "is_main=?", new String[]{"1"}, null, null, null, null);
+        while (cursor.moveToNext()) {
+            mainPages.add(new String(cursor.getString(0)));
+        }
+        return mainPages;
+    }
+
+    protected ArrayList<StringAndMeta> getMainPages() {
+        ArrayList<StringAndMeta> mainPages = new ArrayList<StringAndMeta>();
+        Cursor cursor = mDB.query(DB_TABLE, new String[]{"title", "url"}, "is_main=?", new String[]{"1"}, null, null, null, null);
+        while (cursor.moveToNext()) {
+            mainPages.add(new StringAndMeta(cursor.getString(0), cursor.getString(1)));
+        }
+        return mainPages;
+    }
+
 
 
 

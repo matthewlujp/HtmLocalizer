@@ -80,14 +80,14 @@ public class Page {
 
     public URL getPageUrl() { return pageUrl; }
 
-    public String extractDomain() throws NullPointerException {
+    public String extractDirectory() throws NullPointerException {
         if (pageUrl == null) {
             throw new NullPointerException("pageUrl is not set. extractDomain");
         }
         String strUrl = pageUrl.toString();
         String path = pageUrl.getPath();
         int lastSlash = path.lastIndexOf('/');
-        return pageUrl.getAuthority() + path.substring(0, lastSlash);
+        return pageUrl.getAuthority() + path.substring(0, lastSlash + 1);
     }
 
     private String extractInfoFromContent(Pattern pattern) throws NullPointerException {
@@ -124,11 +124,10 @@ public class Page {
         }
     }
 
-    public boolean domainEqual(Page cmpPage) {
+    public boolean domainEqual(Page orgPage) {
         try {
             // Hit is either domain is substring of another
-            if (this.extractDomain().indexOf(cmpPage.extractDomain()) >= 0 ||
-                    cmpPage.extractDomain().indexOf(this.extractDomain()) >= 0) {
+            if (extractDirectory().indexOf(orgPage.extractDirectory()) >= 0) {
                 return true;
             } else {
                 return false;

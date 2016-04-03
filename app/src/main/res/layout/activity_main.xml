@@ -19,32 +19,60 @@
         <LinearLayout
             android:layout_width="0px"
             android:layout_height="match_parent"
-            android:layout_weight="1"
+            android:layout_weight="0"
             android:focusable="true"
-            android:focusableInTouchMode="true" >
+            android:focusableInTouchMode="true" />
 
-            <EditText
-                android:layout_width="0dp"
-                android:layout_height="40dp"
-                android:id="@+id/urlBox"
-                android:textSize="15sp"
-                android:layout_weight="5"/>
+        <Button
+            android:layout_width="0dp"
+            android:layout_height="45dp"
+            android:id="@+id/backBtn"
+            android:text="B"
+            android:textSize="15sp"
+            android:layout_weight="4"
+            android:layout_gravity="bottom"
+            android:layout_marginRight="0dp"/>
 
-            <Button
-                android:layout_width="0dp"
-                android:layout_height="40dp"
-                android:id="@+id/goBtn"
-                android:text="Go"
-                android:textSize="15sp"
-                android:layout_weight="2"/>
+        <Button
+            android:layout_width="0dp"
+            android:layout_height="45dp"
+            android:id="@+id/forwardBtn"
+            android:text="F"
+            android:textSize="15sp"
+            android:layout_weight="4"
+            android:layout_gravity="bottom"
+            android:layout_marginLeft="0dp"/>
 
-            <Button
-                android:layout_width="0dp"
-                android:layout_height="40dp"
-                android:id="@+id/crawlBtn"
-                android:text="Crawl"
-                android:layout_weight="1"/>
-        </LinearLayout>
+        <EditText
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:id="@+id/urlBox"
+            android:textSize="15sp"
+            android:layout_weight="30"
+            android:paddingLeft="15dp"
+            android:singleLine="true"
+            android:background="@drawable/urlbox_frame"
+            android:layout_gravity="bottom"
+            android:selectAllOnFocus="true"/>
+
+        <Button
+            android:layout_width="0dp"
+            android:layout_height="45dp"
+            android:id="@+id/goBtn"
+            android:text="Go"
+            android:textSize="15sp"
+            android:layout_weight="10"
+            android:layout_gravity="bottom"
+            android:layout_marginBottom="0dp" />
+
+        <Button
+            android:layout_width="0dp"
+            android:layout_height="45dp"
+            android:id="@+id/crawlBtn"
+            android:text="Crawl"
+            android:layout_weight="10"
+            android:layout_gravity="bottom"
+            android:layout_marginBottom="0dp"/>
     </LinearLayout>
 
     <LinearLayout
