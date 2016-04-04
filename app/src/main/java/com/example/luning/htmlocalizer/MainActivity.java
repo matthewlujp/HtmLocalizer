@@ -1,13 +1,17 @@
 package com.example.luning.htmlocalizer;
 
+import android.content.ComponentName;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.Intent;
+import android.content.ServiceConnection;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.graphics.Bitmap;
 import android.os.AsyncTask;
 import android.os.Handler;
+import android.os.IBinder;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.Log;
@@ -52,11 +56,15 @@ public class MainActivity extends AppCompatActivity {
     private Boolean runSearch = false;
     private long saveAmountLimit = 500, crawledAmountLimit = 500;
     private long crawledAndSavedPages = 0;
+    private Intent crawlServiceIntent;
+    private CrawlService mCrawlService;
 
     private static final String DB_NAME = "PAGES_DB";
     private static final String DB_TABLE = "PAGES_CONTENT_TABLE";
     private static final int DB_VERSION = 1;
     private SQLiteDatabase mDB;
+
+
 
     // Data Base Helper
     private static class DBHelper extends SQLiteOpenHelper {
@@ -83,7 +91,6 @@ public class MainActivity extends AppCompatActivity {
             onCreate(db);
         }
     }
-
 
     private static class StringAndMeta {
         private String mTitle, mMeta;
@@ -117,6 +124,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
 
+
+
     @Override
     protected void onCreate(final Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -130,6 +139,10 @@ public class MainActivity extends AppCompatActivity {
         // Get database object
         DBHelper dbHelper = new DBHelper(this);
         mDB = dbHelper.getWritableDatabase();
+
+        // Prepare for crawl service
+        Intent intent = new Intent(getApplicationContext(), CrawlService.class);
+        bindService(intent, mCrawlServiceConnection, Context.BIND_AUTO_CREATE);
 
         // Read the list of saved pages
         new AsyncTask<String, Void, ArrayList<StringAndMeta>>() {
@@ -252,7 +265,18 @@ public class MainActivity extends AppCompatActivity {
         crawlBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                String startUrl = urlBox.getText().toString();
+                if (startUrl.equals("")) {
+                    startUrl = mWebView.getUrl();
+                }
+                try {
+                    mCrawlService.crawlPages(startUrl);
+                } catch (Exception e) {
+                    Log.e("onCrawlPressed", e.toString());
+                }
+
                 //runSearch = true;
+                /*
                 crawledAndSavedPages = 0;
                 ArrayList<URL> visitedList = new ArrayList<URL>();
                 Log.e("crawlClick", String.valueOf(visitedList.size()));
@@ -268,6 +292,7 @@ public class MainActivity extends AppCompatActivity {
                 } catch (Exception e) {
                     Log.e("crawlClick", e.toString());
                 }
+                */
             }
         });
 
@@ -289,6 +314,42 @@ public class MainActivity extends AppCompatActivity {
             }
         });
     }
+
+    private ServiceConnection mCrawlServiceConnection  = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder service) {
+            Log.e("service", "Service connected.");
+            CrawlService.LocalBinder binder = (CrawlService.LocalBinder)service;
+            mCrawlService = binder.getService();
+
+
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+        }
+    };
+
+    @Override
+    public void onStart() {
+        super.onStart();
+        // Prepare for crawling service
+        //Intent intent = new Intent(getApplicationContext(), CrawlService.class);
+        //bindService(intent, mCrawlServiceConnection, Context.BIND_AUTO_CREATE);
+    }
+
+    @Override
+    public void onStop() {
+        super.onStop();
+    }
+
+    @Override
+    public void onDestroy() {
+        // Destroy service
+        unbindService(mCrawlServiceConnection);
+        super.onDestroy();
+    }
+
 
     protected String completeURL(String strURL) {
         Pattern hrefPattern = Pattern.compile("http://|https://");
