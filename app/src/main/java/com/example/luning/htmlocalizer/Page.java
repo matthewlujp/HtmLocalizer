@@ -31,45 +31,60 @@ public class Page {
         this.contentText = content;
     }
 
-    public static Boolean isAsset(String strUrl) {
+    public static Boolean isAsset(String url) {
         ArrayList<String> assetExtensions
                 = new ArrayList<String>(Arrays.asList(
                 ".png", ".jpeg", ".jpg", ".JPG", ".js", ".css"
         ));
         for (String ext: assetExtensions) {
-            if (strUrl.indexOf(ext) >= 0) return true;
+            if (url.contains(ext)) return true;
         }
         return false;
     }
 
-    public static Boolean isPageURL(String strUrl) {
-        if (isAsset(strUrl)) {
+    public static boolean isPageURL(String url) {
+        if (isAsset(url)) {
             return false;
-        } else if (strUrl.indexOf('#') >= 0) {
+        } else if (url.contains("#")) {
             return false;
         }
         return true;
+    }
+
+    public static boolean isJsURL(String url) {
+        return url.contains(".js");
+    }
+
+    public static boolean isCSSURL(String url) {
+        return url.contains(".css");
+    }
+
+    public static boolean isImageURL(String url) {
+        if (url.contains(".jpeg") || url.contains(".jpg") || url.contains(".JPG")) return true;
+        else if (url.contains(".png")) return true;
+        else return false;
     }
 
     public ArrayList<URL> findLinks() throws Exception {
         if (contentText == null) {
             throw new NullPointerException("Page content is not set.");
         }
-        Pattern hrefPattern = Pattern.compile("(?i)<a .*?href=\"(.*?)\"");
+        String linkPattern = "((?i)<a .*?href|<link .*?href|<script .*?src|<img .*?src)=\"(.*?)\"";
+        Pattern hrefPattern = Pattern.compile(linkPattern);
         Matcher matcher = hrefPattern.matcher(contentText);
         ArrayList<URL> links = new ArrayList<URL>();
         while (matcher.find()) {
             String matchedLink = "";
             try {
-                matchedLink = matcher.group(1);
-                if (Page.isPageURL(matchedLink)) {
+                matchedLink = matcher.group(2);
+                if (Page.isPageURL(matchedLink) || isJsURL(matchedLink) || isCSSURL(matchedLink) || isImageURL(matchedLink)) {
                     URL newUrl = new URL(pageUrl, matchedLink);
-                    if (links.indexOf(newUrl) < 0) {
+                    if (!links.contains(newUrl)) {
                         links.add(newUrl);
                     }
                 }
             } catch (MalformedURLException e) {
-                Log.e("findLinks", e.toString());
+                Log.e("findLinks", matchedLink + " - " + e.toString());
             } catch (Exception e) {
                 throw e;
             }
@@ -127,7 +142,7 @@ public class Page {
     public boolean domainEqual(Page orgPage) {
         try {
             // Hit is either domain is substring of another
-            if (extractDirectory().indexOf(orgPage.extractDirectory()) >= 0) {
+            if (extractDirectory().contains(orgPage.extractDirectory())) {
                 return true;
             } else {
                 return false;

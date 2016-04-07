@@ -1,96 +1,58 @@
 package com.example.luning.htmlocalizer;
 
 import android.content.ComponentName;
-import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
-import android.database.sqlite.SQLiteOpenHelper;
 import android.graphics.Bitmap;
 import android.os.AsyncTask;
 import android.os.Handler;
 import android.os.IBinder;
+import android.support.annotation.Nullable;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
+import android.webkit.MimeTypeMap;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
-import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageButton;
 import android.widget.Spinner;
 import android.widget.Toast;
 
-import com.android.volley.ExecutorDelivery;
-import com.android.volley.Request;
 import com.android.volley.RequestQueue;
-import com.android.volley.Response;
-import com.android.volley.VolleyError;
-import com.android.volley.toolbox.StringRequest;
 import com.android.volley.toolbox.Volley;
 
-import java.net.URL;
+import java.io.ByteArrayInputStream;
 import java.util.ArrayList;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class MainActivity extends AppCompatActivity {
     public final static String FILE_LIST = "SAVED_FILE_LIST";
     private final String homePage = "https://www.google.co.jp/";
-    private final Handler mHandler = new Handler();
     private Context mContext;
     private Spinner savedPageSpinner;
-    private Button goBtn, crawlBtn, backBtn, forwardBtn;
+    private ImageButton backBtn, forwardBtn, crawlBtn, goBtn;
     private EditText urlBox;
     private ArrayList<StringAndMeta> spinnerTitleList;
     private ArrayAdapter<StringAndMeta> spinnerArrayAdapter;
     private WebView mWebView;
     private RequestQueue mRequestQueue;
-    private Boolean runSearch = false;
-    private long saveAmountLimit = 500, crawledAmountLimit = 500;
-    private long crawledAndSavedPages = 0;
-    private Intent crawlServiceIntent;
     private CrawlService mCrawlService;
-
-    private static final String DB_NAME = "PAGES_DB";
-    private static final String DB_TABLE = "PAGES_CONTENT_TABLE";
-    private static final int DB_VERSION = 1;
     private SQLiteDatabase mDB;
 
 
 
-    // Data Base Helper
-    private static class DBHelper extends SQLiteOpenHelper {
-        public DBHelper(Context context) {
-            super(context, DB_NAME, null, DB_VERSION);
-        }
-
-        @Override
-        public void onCreate(SQLiteDatabase db) {
-            db.execSQL("create table if not exists " +
-                    DB_TABLE + "(" +
-                    "id integer primary key autoincrement," +
-                    "title text," +
-                    "url text not null unique," +
-                    "domain text not null," +
-                    "is_main boolean not null," +
-                    "content text" +
-                    ")");
-        }
-
-        @Override
-        public void onUpgrade(SQLiteDatabase db, int oldVer, int newVer) {
-            db.execSQL("drop table if exists " + DB_TABLE);
-            onCreate(db);
-        }
-    }
 
     private static class StringAndMeta {
         private String mTitle, mMeta;
@@ -124,8 +86,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
 
-
-
     @Override
     protected void onCreate(final Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -137,7 +97,7 @@ public class MainActivity extends AppCompatActivity {
         mRequestQueue = new Volley().newRequestQueue(MainActivity.this);
 
         // Get database object
-        DBHelper dbHelper = new DBHelper(this);
+        PageDBHelper dbHelper = new PageDBHelper(this);
         mDB = dbHelper.getWritableDatabase();
 
         // Prepare for crawl service
@@ -215,10 +175,79 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onPageFinished(WebView view, String url) {
             }
+
+            @Override
+            @Nullable
+            public WebResourceResponse shouldInterceptRequest(WebView view,
+                                                              WebResourceRequest request) {
+                String extension = MimeTypeMap.getFileExtensionFromUrl(request.getUrl().toString());
+                if (extension.equals("css") || extension.equals("js")) {
+                    return loadTextAssetsFromDB(request.getUrl().toString());
+                } else if (extension.equals("jpeg") || extension.equals("jpg") ||
+                        extension.equals("JPG") || extension.equals("png")) {
+                    return loadImageAssetsFromDB(request.getUrl().toString());
+                }
+                return null;
+            }
+
+            @Nullable
+            public WebResourceResponse loadTextAssetsFromDB (String url) {
+                Cursor assetFileInfo = getPageCursor(url, new String[]{"content"});
+                if (assetFileInfo != null && assetFileInfo.getCount() > 0) {
+                    assetFileInfo.moveToFirst();
+                    String assetText = assetFileInfo.getString(0);
+                    assetFileInfo.close();
+                    try {
+                        return new WebResourceResponse(getMimeType(url),
+                                "UTF-8", new ByteArrayInputStream(assetText.getBytes("UTF-8")));
+                    } catch (Exception e) {
+                        Log.e("WebViewClient", e.toString());
+                    }
+                }
+                return null;
+            }
+
+            @Nullable
+            public WebResourceResponse loadImageAssetsFromDB(String url) {
+                Cursor assetFileInfo = getImageCursor(url, new String[]{"image"});
+                if (assetFileInfo != null && assetFileInfo.getCount() > 0) {
+                    assetFileInfo.moveToFirst();
+                    byte[] imageData = assetFileInfo.getBlob(0);
+                    assetFileInfo.close();
+                    try {
+                        return new WebResourceResponse(getMimeType(url),
+                                "utf-8", new ByteArrayInputStream(imageData));
+                    } catch (Exception e) {
+                        Log.e("loadImageAssets", e.toString());
+                    }
+                }
+                return null;
+            }
+
+            public String getMimeType(String url) {
+                String type = null;
+                String extension = MimeTypeMap.getFileExtensionFromUrl(url);
+                if (extension != null) {
+                    if (extension.equals("js")) {
+                        return "text/javascript";
+                    }
+                    else if (extension.equals("jpg") || extension.equals("jpeg") ||extension.equals("JPG")) {
+                        return "image/*";
+                    }
+                    else if (extension.equals("png")) {
+                        return "image/*";
+                    }
+                    else if (extension.equals("svg")) {
+                        return "image/svg+xml";
+                    }
+                    type = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
+                }
+                return type;
+            }
         });
         mWebView.loadUrl(homePage);
 
-        goBtn = (Button)findViewById(R.id.goBtn);
+        goBtn = (ImageButton)findViewById(R.id.goBtn);
         urlBox = (EditText)findViewById(R.id.urlBox);
         urlBox.setOnKeyListener(new View.OnKeyListener() {
             // Enter key = Go
@@ -261,7 +290,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        crawlBtn = (Button)findViewById(R.id.crawlBtn);
+        crawlBtn = (ImageButton)findViewById(R.id.crawlBtn);
         crawlBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -274,29 +303,10 @@ public class MainActivity extends AppCompatActivity {
                 } catch (Exception e) {
                     Log.e("onCrawlPressed", e.toString());
                 }
-
-                //runSearch = true;
-                /*
-                crawledAndSavedPages = 0;
-                ArrayList<URL> visitedList = new ArrayList<URL>();
-                Log.e("crawlClick", String.valueOf(visitedList.size()));
-                try {
-                    Log.e("crawlClick", "CRAWL button pressed");
-                    String strStartUrl = urlBox.getText().toString();
-                    if (strStartUrl.equals("")) {
-                        strStartUrl = mWebView.getUrl();
-                    }
-                    URL startURL = new URL(strStartUrl);
-                    Page startPage = new Page(startURL);
-                    crawl(startPage, startPage, visitedList);
-                } catch (Exception e) {
-                    Log.e("crawlClick", e.toString());
-                }
-                */
             }
         });
 
-        backBtn = (Button)findViewById(R.id.backBtn);
+        backBtn = (ImageButton)findViewById(R.id.backBtn);
         backBtn.setEnabled(false);
         backBtn.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -305,7 +315,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        forwardBtn = (Button)findViewById(R.id.forwardBtn);
+        forwardBtn = (ImageButton)findViewById(R.id.forwardBtn);
         forwardBtn.setEnabled(false);
         forwardBtn.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -331,19 +341,6 @@ public class MainActivity extends AppCompatActivity {
     };
 
     @Override
-    public void onStart() {
-        super.onStart();
-        // Prepare for crawling service
-        //Intent intent = new Intent(getApplicationContext(), CrawlService.class);
-        //bindService(intent, mCrawlServiceConnection, Context.BIND_AUTO_CREATE);
-    }
-
-    @Override
-    public void onStop() {
-        super.onStop();
-    }
-
-    @Override
     public void onDestroy() {
         // Destroy service
         unbindService(mCrawlServiceConnection);
@@ -360,50 +357,6 @@ public class MainActivity extends AppCompatActivity {
         return strURL;
     }
 
-    protected void crawl(final Page page, final Page orgPage, final ArrayList<URL> visitedLinks) {
-        if (crawledAndSavedPages > saveAmountLimit || visitedLinks.size() > crawledAmountLimit) {
-            return;
-        }
-        Log.e("visitedLinks", String.valueOf(visitedLinks.size()));
-        if (visitedLinks.indexOf(page.getPageUrl()) >= 0) {
-            Log.e("crawl", "Already visited.");
-            return;
-        }
-        visitedLinks.add(page.getPageUrl());
-        mRequestQueue.add(new StringRequest(Request.Method.GET, page.getPageUrl().toString(),
-                new Response.Listener<String>() {
-                    @Override
-                    public void onResponse(final String response) {
-                        page.setContentText(response);
-                        savePage(page, page.equals(orgPage));
-                        Log.e("savedPages", String.valueOf(++crawledAndSavedPages));
-                        if (page.domainEqual(orgPage)) {
-                            ArrayList<URL> newLinks;
-                            try {
-                                newLinks = page.findLinks();
-                            } catch (Exception e) {
-                                Log.e("crawl_onResponse", e.toString());
-                                newLinks = new ArrayList<URL>();
-                            }
-                            newLinks.removeAll(visitedLinks);
-                            for (URL link : newLinks) {
-                                Page newPage = new Page(link);
-                                if (newPage.domainEqual(orgPage)) {
-                                    crawl(newPage, orgPage, visitedLinks);
-                                }
-                            }
-                        }
-                    }
-                },
-                new Response.ErrorListener() {
-                    @Override
-                    public void onErrorResponse(VolleyError error) {
-                        Log.e("crawl_onError", "Request failed. " + error.toString());
-                    }
-                }).setShouldCache(false));
-    }
-
-
     protected void modifySpinner() {
         spinnerTitleList = getMainPages();
         spinnerTitleList.add(new StringAndMeta("Home", homePage));
@@ -411,21 +364,8 @@ public class MainActivity extends AppCompatActivity {
         spinnerArrayAdapter.notifyDataSetChanged();
     }
 
-    protected void savePage(Page page, boolean isMain) {
-        ContentValues values = new ContentValues();
-        values.put("title", page.extractTitle());
-        values.put("url", page.getPageUrl().toString());
-        values.put("domain", page.extractDirectory());
-        values.put("is_main", isMain);
-        values.put("content", page.getContentText());
-        int colNum = mDB.update(DB_TABLE, values, "url=?", new String[]{page.getPageUrl().toString()});
-        if (colNum == 0) {
-            mDB.insert(DB_TABLE, "", values);
-        }
-    }
-
     protected String getContent(String strUrl) {
-        Cursor cursor = getPageInfo(strUrl, new String[]{"content"});
+        Cursor cursor = getPageCursor(strUrl, new String[]{"content"});
         String content;
         if (cursor == null) {
             content = "";
@@ -438,7 +378,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     protected String getTitle(String strUrl) {
-        Cursor cursor = getPageInfo(strUrl, new String[]{"title"});
+        Cursor cursor = getPageCursor(strUrl, new String[]{"title"});
         String content;
         if (cursor == null) {
             content = "";
@@ -450,8 +390,30 @@ public class MainActivity extends AppCompatActivity {
         return content;
     }
 
-    protected Cursor getPageInfo(String strUrl, String[] item) {
-        Cursor cursor = mDB.query(DB_TABLE, item,
+    protected Cursor getPageCursor(String url, String[] item) {
+        Cursor cursor = mDB.query(PageDBHelper.DB_PAGE_TABLE, item,
+                "url=?", new String[]{url}, null, null, "1");
+        if (cursor.getCount() == 0) {
+            return null;
+        } else {
+            cursor.moveToFirst();
+            return cursor;
+        }
+    }
+
+    protected Cursor getImageCursor(String url, String[] item) {
+        Cursor cursor = mDB.query(PageDBHelper.DB_IMAGE_TABLE, item,
+                "url=?", new String[]{url}, null, null, "1");
+        if (cursor.getCount() == 0) {
+            return null;
+        } else {
+            cursor.moveToFirst();
+            return cursor;
+        }
+    }
+
+    protected Cursor getPageCursor(String strUrl) {
+        Cursor cursor = mDB.query(PageDBHelper.DB_PAGE_TABLE, null,
                 "url=?", new String[]{strUrl}, null, null, "1");
         if (cursor.getCount() == 0) {
             return null;
@@ -461,19 +423,8 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    protected Cursor getPageInfo(String strUrl) {
-        Cursor cursor = mDB.query(DB_TABLE, null,
-                "url=?", new String[]{strUrl}, null, null, "1");
-        if (cursor.getCount() == 0) {
-            return null;
-        } else {
-            cursor.moveToFirst();
-            return cursor;
-        }
-    }
-
-    protected Cursor getPageInfo(int id) {
-        Cursor cursor = mDB.query(DB_TABLE, null,
+    protected Cursor getPageCursor(int id) {
+        Cursor cursor = mDB.query(PageDBHelper.DB_PAGE_TABLE, null,
                 "id=?", new String[]{String.valueOf(id)}, null, null, "1");
         if (cursor.getCount() == 0) {
             return null;
@@ -485,7 +436,7 @@ public class MainActivity extends AppCompatActivity {
 
     protected ArrayList<String> getMainPageUrls() {
         ArrayList<String> mainPages = new ArrayList<String>();
-        Cursor cursor = mDB.query(DB_TABLE, new String[]{"url"}, "is_main=true", null, null, null, "1");
+        Cursor cursor = mDB.query(PageDBHelper.DB_PAGE_TABLE, new String[]{"url"}, "is_main=true", null, null, null, "1");
         while (cursor.moveToNext()) {
             mainPages.add(new String(cursor.getString(0)));
         }
@@ -494,7 +445,7 @@ public class MainActivity extends AppCompatActivity {
 
     protected ArrayList<String> getMainPageTitles() {
         ArrayList<String> mainPages = new ArrayList<String>();
-        Cursor cursor = mDB.query(DB_TABLE, new String[]{"title"}, "is_main=?", new String[]{"1"}, null, null, null, null);
+        Cursor cursor = mDB.query(PageDBHelper.DB_PAGE_TABLE, new String[]{"title"}, "is_main=?", new String[]{"1"}, null, null, null, null);
         while (cursor.moveToNext()) {
             mainPages.add(new String(cursor.getString(0)));
         }
@@ -503,7 +454,7 @@ public class MainActivity extends AppCompatActivity {
 
     protected ArrayList<StringAndMeta> getMainPages() {
         ArrayList<StringAndMeta> mainPages = new ArrayList<StringAndMeta>();
-        Cursor cursor = mDB.query(DB_TABLE, new String[]{"title", "url"}, "is_main=?", new String[]{"1"}, null, null, null, null);
+        Cursor cursor = mDB.query(PageDBHelper.DB_PAGE_TABLE, new String[]{"title", "url"}, "is_main=?", new String[]{"1"}, null, null, null, null);
         while (cursor.moveToNext()) {
             mainPages.add(new StringAndMeta(cursor.getString(0), cursor.getString(1)));
         }

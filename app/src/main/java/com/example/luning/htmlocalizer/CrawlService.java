@@ -1,11 +1,15 @@
 package com.example.luning.htmlocalizer;
 
+import android.app.Notification;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
+import android.database.sqlite.SQLiteStatement;
 import android.os.AsyncTask;
 import android.os.Binder;
 import android.os.IBinder;
@@ -17,18 +21,25 @@ import com.android.volley.VolleyError;
 import com.android.volley.toolbox.StringRequest;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.BindException;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
+import java.net.ProtocolException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+
 
 /**
  * Created by luning on 2016/04/03.
@@ -36,21 +47,27 @@ import java.util.concurrent.locks.ReentrantLock;
 public class CrawlService extends Service {
     private final IBinder mBinder = new LocalBinder();
     private static final int JOB_MAX_LIMIT = 80;
-    private static final int TASK_WAITING_AMOUNT_LIMIT = 50;
-    private static final int CRAWLED_AMOUNT_LIMIT = 800;
-    private static final String DB_NAME = "PAGES_DB";
-    private static final String DB_TABLE = "PAGES_CONTENT_TABLE";
-    private static final int DB_VERSION = 1;
+    private static final int CRAWLED_AMOUNT_LIMIT = 6000;
+    private static long PAGE_TRANSACTION_BATCH_SIZE = 200;
+    private static long IMAGE_TRANSACTION_BATCH_SIZE = 500;
     private SQLiteDatabase mDB;
-    private Page startPage;
+    private DBTransactionManager<PageDBHelper.PageRecord> mPageDBTM;
+    private DBTransactionManager<PageDBHelper.ImageRecord> mImageDBTM;
+    private Page mStartPage;
+    private String mStartPageTitle;
     private boolean stop_flag = true;
     private ArrayList<Crawler> mTaskQueue = new ArrayList<Crawler>();
     private ArrayBlockingQueue<Crawler> mOnRunQueue = new ArrayBlockingQueue<Crawler>(JOB_MAX_LIMIT);
     private ArrayList<URL> mVisitedLinks;
     private final Lock lock = new ReentrantLock();
+    private final Lock ntfLock = new ReentrantLock();
     private final Condition taskNotFull = lock.newCondition(),
         taskNotEmpty = lock.newCondition(),
         taskNotTooMany = lock.newCondition();
+    private ThreadPoolExecutor mCrawlExecutor;
+
+    private static int CORE_POOL_SIZE = 4, MAX_POOL_SIZE = 8;
+    private static long KEEP_ALIVE_TIME = 5000;
 
     public class LocalBinder extends Binder {
         CrawlService getService() {
@@ -58,12 +75,13 @@ public class CrawlService extends Service {
         }
     }
 
-
     @Override
     public void onCreate() {
         // Get database object
-        DBHelper dbHelper = new DBHelper(this);
+        PageDBHelper dbHelper = new PageDBHelper(this);
         mDB = dbHelper.getWritableDatabase();
+        mPageDBTM = new DBTransactionManager<PageDBHelper.PageRecord>(mDB);
+        mImageDBTM = new DBTransactionManager<PageDBHelper.ImageRecord>(mDB);
     }
 
     @Override
@@ -76,33 +94,97 @@ public class CrawlService extends Service {
 
     }
 
-    // Data Base Helper
-    private static class DBHelper extends SQLiteOpenHelper {
-        public DBHelper(Context context) {
-            super(context, DB_NAME, null, DB_VERSION);
-        }
+    public void crawlPages(final String startUrl) {
+        mCrawlExecutor = new ThreadPoolExecutor(CORE_POOL_SIZE, MAX_POOL_SIZE,
+                KEEP_ALIVE_TIME, TimeUnit.MICROSECONDS,
+                new LinkedBlockingQueue<Runnable>());
 
-        @Override
-        public void onCreate(SQLiteDatabase db) {
-            db.execSQL("create table if not exists " +
-                    DB_TABLE + "(" +
-                    "id integer primary key autoincrement," +
-                    "title text," +
-                    "url text not null unique," +
-                    "domain text not null," +
-                    "is_main boolean not null," +
-                    "content text" +
-                    ")");
-        }
+        Runnable crawlController = new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    mPageDBTM.initializeTransaction(PageDBHelper.PAGE_TRANSACTION_SQL);
+                } catch (Exception e) {
+                    Log.e("crawlPages", e.toString());
+                    return;
+                }
+                try {
+                    mImageDBTM.initializeTransaction(PageDBHelper.IMAGE_TRANSACTION_SQL);
+                } catch (Exception e) {
+                    Log.e("crawlPages", e.toString());
+                    return;
+                }
+                mVisitedLinks = new ArrayList<URL>();
+                try {
+                    mStartPage = new Page(new URL(startUrl));
+                } catch (MalformedURLException e) {
+                    Log.e("crawlPage", e.toString());
+                    return;
+                } catch (Exception e) {
+                    Log.e("crawlPage", e.toString());
+                    return;
+                }
 
-        @Override
-        public void onUpgrade(SQLiteDatabase db, int oldVer, int newVer) {
-            db.execSQL("drop table if exists " + DB_TABLE);
-            onCreate(db);
-        }
+                try {
+                    mCrawlExecutor.execute(new Crawler(mStartPage.getPageUrl()));
+                } catch (Exception e) {
+                    Log.e("crawlPages", e.toString());
+                }
+
+                // Wait till crawling process ends
+                do {
+                    try {
+                        synchronized (this) {
+                            wait(4000);
+                        }
+                    } catch (Exception e) { Log.e("crawlPages", e.toString()); }
+                } while (mCrawlExecutor.getQueue().size() > 0);
+
+
+                Notification.Builder nftBuilder = notificationBuilderFactory("HtmLocalizer - " +
+                        mStartPageTitle, "Crawling completed. Saving...", R.mipmap.ic_launcher);
+                nftBuilder.setProgress(0, 0, true);
+                showNotification(R.layout.activity_main, nftBuilder);
+
+                // Save pages to database
+                try {
+                    mPageDBTM.commitTransaction(false);
+                } catch (Exception e) {
+                    Log.e("crawlPages", e.toString());
+                }
+
+                nftBuilder = notificationBuilderFactory("HtmLocalizer - " + mStartPageTitle,
+                        "Pages saved. Saving images...", R.mipmap.ic_launcher);
+                nftBuilder.setProgress(0, 0, true);
+                showNotification(R.layout.activity_main, nftBuilder);
+
+                // Save images to database
+                try {
+                    mImageDBTM.commitTransaction(false);
+                } catch (Exception e) {
+                    Log.e("crawlPages", e.toString());
+                }
+
+                nftBuilder = notificationBuilderFactory("HtmLocalizer - " + mStartPageTitle,
+                        "Localizing completed.", R.mipmap.ic_launcher);
+                showNotification(R.layout.activity_main, nftBuilder);
+            }
+        };
+        mCrawlExecutor.execute(crawlController);
     }
 
-    private class Crawler extends AsyncTask<Void, Integer, String> {
+    protected Notification.Builder notificationBuilderFactory(
+            String title, CharSequence text, int icon) {
+        Notification.Builder builder = new Notification.Builder(this);
+        builder.setWhen(System.currentTimeMillis());
+        builder.setContentTitle(title);
+        builder.setContentText(text);
+        builder.setSmallIcon(icon);
+        return builder;
+    }
+
+
+    private class Crawler implements Runnable {
         private URL mUrl;
         private ArrayList<URL> newLinks = null;
 
@@ -111,152 +193,165 @@ public class CrawlService extends Service {
         }
 
         @Override
-        protected String doInBackground(Void... params) {
-            Log.e("doInBackgroud", "1");
+        public void run() {
             Page page = new Page(mUrl);
             // Crawled too many or already visited
             if (mVisitedLinks.size() > CRAWLED_AMOUNT_LIMIT || mVisitedLinks.contains(page.getPageUrl())) {
-                return "";
+                return;
             }
             Log.e("visitedLinks", String.valueOf(mVisitedLinks.size()));
-            HttpURLConnection con = null;
-            BufferedReader br = null;
-            StringBuilder response = new StringBuilder();
-            Log.e("doInBackgroud", "2");
-            try {
-                con = (HttpURLConnection) mUrl.openConnection();
-                con.setRequestMethod("GET");
-                con.setInstanceFollowRedirects(false);
-                con.setDoInput(true);
-                con.setDoOutput(false);
-                Log.e("doInBackgroud", "3");
-                con.connect();
+            mVisitedLinks.add(mUrl);
 
-                Log.e("doInBackgroud", "4");
-                br = new BufferedReader(
-                        new InputStreamReader(con.getInputStream()));
-                String str;
-                Log.e("doInBackgroud", "5");
-                while ((str = br.readLine()) != null) {
-                    response.append(str);
-                }
-                Log.e("doInBackgroud", "6");
-
-            } catch (Exception e) {
-                Log.e("Crawler", e.toString());
-            } finally {
+            // Get file via network and save it
+            if (Page.isImageURL(mUrl.toString())) {
+                // If url designates a image
+                byte[] image_data = httpGetImage(mUrl);
                 try {
-                    if (con != null) {
-                        con.disconnect();
-                    }
-                    if (br != null) {
-                        br.close();
-                    }
-                } catch (Exception e) {
-                    Log.e("Crawler", e.toString());
-                }
+                    mImageDBTM.addRecord(new PageDBHelper.ImageRecord(mUrl.toString(),
+                            mStartPage.extractDirectory(), image_data));
+                } catch (Exception e) { Log.e("Crawler", e.toString()); }
+            } else {
+                // If url designates a normal page
+                page.setContentText(httpGetRawText(mUrl));
+                // Set start page title (Name of a website)
+                if (page.equals(mStartPage)) mStartPageTitle = page.extractTitle();
+
+                try {
+                    mPageDBTM.addRecord(new PageDBHelper.PageRecord(page.extractTitle(),
+                            page.getPageUrl().toString(), mStartPage.extractDirectory(),
+                            page.equals(mStartPage), page.getContentText()));
+                } catch (Exception e) { Log.e("Crawler", e.toString()); }
             }
 
-            Log.e("doInBackgroud", "7");
-            page.setContentText(response.toString());
-            mVisitedLinks.add(mUrl);
-            if (page.domainEqual(startPage)) {
+            // Notify status
+            long crawledAmount = mVisitedLinks.size();
+            if (crawledAmount % 10 == 0) {
+                CharSequence ntfMsg = "Crawled " + crawledAmount + " pages.";
+                Notification.Builder nftBuilder = notificationBuilderFactory(
+                        "HtmLocalizer - " + mStartPageTitle, ntfMsg, R.mipmap.ic_launcher);
+                nftBuilder.setProgress(0, 0, true);
+                showNotification(R.layout.activity_main, nftBuilder);
+            }
+
+            // Find new links
+            if (page.domainEqual(mStartPage) && (Page.isPageURL(mUrl.toString()) ||
+                Page.isJsURL(mUrl.toString()) || Page.isCSSURL(mUrl.toString()))) {
                 try {
-                    Log.e("doInBackgroud", "8");
                     newLinks = page.findLinks();
                     newLinks.removeAll(mVisitedLinks);
-                    Log.e("doInBackgroud", "9");
                 } catch (Exception e) {
                     Log.e("Crawler", e.toString());
                 }
             }
-            if (newLinks == null){
-                newLinks = new ArrayList<URL>();
+            newLinks = (newLinks == null) ? new ArrayList<URL>() : newLinks;
+            // Log.e("newLinks-"+mUrl.toString(), newLinks.toString());
+
+            if (mPageDBTM.getRecordNum() > PAGE_TRANSACTION_BATCH_SIZE) {
+                try {
+                    mPageDBTM.commitTransaction(true);
+                } catch (Exception e) {
+                    Log.e("Crawler", e.toString());
+                }
             }
-            Log.e("doInBackgroud", "10");
-            savePage(page, page.equals(startPage));
-            Log.e("doInBackgroud", "11");
-            for (URL link : newLinks) {
-                Page newPage = new Page(link);
-                if (newPage.domainEqual(startPage)) {
+
+            if (mImageDBTM.getRecordNum() > IMAGE_TRANSACTION_BATCH_SIZE) {
+                try {
+                    mImageDBTM.commitTransaction(true);
+                } catch (Exception e) {
+                    Log.e("Crawler", e.toString());
+                }
+            }
+
+            // Check new links
+            if (page.domainEqual(mStartPage)) {
+                for (URL link : newLinks) {
+                    Page newPage = new Page(link);
                     // Enqueue a new Crawler
                     try {
-                        Log.e("doInBackgroud", "12");
-                        mTaskQueue.add(new Crawler(link));
+                        mCrawlExecutor.execute(new Crawler(link));
                     } catch (Exception e) {
                         Log.e("Crawler", e.toString());
                     }
                 }
             }
-            // Unlock the main thread
-            lock.lock();
-            if (mTaskQueue.size() > 0) taskNotEmpty.signal();
-            lock.unlock();
-
-            Log.e("doInBackgroud", "13");
-            // Dequeue itself from mOnRunQueue when finish running
-            mOnRunQueue.remove(this);
-            Log.e("doInBackgroud", "14");
-            return page.getContentText();
-        }
-
-        @Override
-        protected void onProgressUpdate(Integer... progress) {
-        }
-
-        @Override
-        protected void onPostExecute(String result) {
         }
     }
 
-    protected void savePage(Page page, boolean isMain) {
-        ContentValues values = new ContentValues();
-        values.put("title", page.extractTitle());
-        values.put("url", page.getPageUrl().toString());
-        values.put("domain", page.extractDirectory());
-        values.put("is_main", isMain);
-        values.put("content", page.getContentText());
-        int colNum = mDB.update(DB_TABLE, values, "url=?", new String[]{page.getPageUrl().toString()});
-        if (colNum == 0) {
-            mDB.insert(DB_TABLE, "", values);
-        }
-    }
 
-    public void crawlPages(String startUrl) {
-        mVisitedLinks = new ArrayList<URL>();
+    protected byte[] httpGetImage(URL url) {
+        HttpURLConnection con = null;
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         try {
-            startPage = new Page(new URL(startUrl));
-        } catch (MalformedURLException e) {
-            return;
+            con = getConnectionFactory(url);
+            InputStream is = con.getInputStream();
+            int readLen;
+            byte[] data = new byte[1024];
+            while ((readLen = is.read(data, 0 , data.length)) != -1) {
+                buffer.write(data, 0, readLen);
+            }
+            buffer.flush();
         } catch (Exception e) {
-            Log.e("crawlPage", e.toString());
-            return;
-        }
-
-        try {
-            mTaskQueue.add(new Crawler(startPage.getPageUrl()));
-        } catch (Exception e) {
-            Log.e("crawlPages", e.toString());
-        }
-
-        Log.e("crawlPages", "0");
-        while (mTaskQueue.size() > 0 || mOnRunQueue.size() > 0) {
-            try {
-                Log.e("crawlPages", "1");
-                // Wait if there is no task
-                lock.lock();
-                if (mTaskQueue.size() == 0) taskNotEmpty.await();
-                lock.unlock();
-                Crawler crawler = mTaskQueue.remove(0);
-                Log.e("crawlPages", "2");
-                mOnRunQueue.put(crawler);
-                Log.e("crawlPages", "3");
-                crawler.execute();
-                Log.e("crawlPages", "4");
-            } catch (Exception e) {
-                Log.e("crawlPages", e.toString());
+            Log.e("httpGetImage", e.toString());
+            return null;
+        } finally {
+            if (con != null) {
+                con.disconnect();
             }
         }
+        return buffer.toByteArray();
+    }
+
+    protected String httpGetRawText(URL url) {
+        HttpURLConnection con = null;
+        try {
+            con = getConnectionFactory(url);
+            return inputStream2String(con.getInputStream());
+        } catch (Exception e) {
+            Log.e("httpGetRawText", e.toString());
+            return "";
+        } finally {
+            if (con != null) {
+                con.disconnect();
+            }
+        }
+    }
+
+    protected HttpURLConnection getConnectionFactory(URL url)
+            throws IOException, ProtocolException{
+        HttpURLConnection con = (HttpURLConnection) url.openConnection();
+        con.setRequestMethod("GET");
+        con.setInstanceFollowRedirects(true);
+        con.setDoInput(true);
+        con.connect();
+        return con;
+    }
+
+    protected String inputStream2String(InputStream is) {
+        BufferedReader br = null;
+        StringBuilder stringBuilder = new StringBuilder();
+        try {
+            br = new BufferedReader(new InputStreamReader(is));
+            String str;
+            while ((str = br.readLine()) != null) { stringBuilder.append(str); }
+        } catch (Exception e) {
+            Log.e("inputStream2String", e.toString());
+        } finally {
+            try {
+                if (br != null) { br.close(); }
+            } catch (Exception e) { Log.e("inputStream2String", e.toString()); }
+        }
+        return stringBuilder.toString();
+    }
+
+    protected void showNotification(int notificationId, Notification.Builder builder) {
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        builder.setContentIntent(PendingIntent.getActivity(
+                this, 0, intent, PendingIntent.FLAG_ONE_SHOT));
+        NotificationManager notificationManager =
+                (NotificationManager)this.getSystemService(this.NOTIFICATION_SERVICE);
+        notificationManager.cancel(0);
+        notificationManager.notify(notificationId, builder.build());
     }
 
     public void cancelTask() { stop_flag = true; }
