@@ -2,5 +2,6 @@
     <string name="app_name">HtmLocalizer</string>
     <string name="drawer_open">Open</string>
     <string name="drawer_close">Close</string>
+    <string name="drawer_header">Localized WebSites</string>
 
 </resources>

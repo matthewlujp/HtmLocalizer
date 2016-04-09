@@ -15,8 +15,7 @@
         android:layout_gravity="center_vertical"
         android:id="@+id/backBtn"
         android:src="@drawable/back_stateful"
-        android:background="@drawable/color_stateful"
-        />
+        android:background="@drawable/color_stateful" />
 
     <ImageButton
         android:layout_width="0dp"

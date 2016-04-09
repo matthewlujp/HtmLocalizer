@@ -19,10 +19,14 @@ import android.support.v4.widget.DrawerLayout;
 import android.support.v7.app.ActionBarDrawerToggle;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.support.v7.widget.LinearLayoutManager;
+import android.support.v7.widget.RecyclerView;
 import android.support.v7.widget.Toolbar;
 import android.util.Log;
+import android.view.GestureDetector;
 import android.view.KeyEvent;
 import android.view.MenuItem;
+import android.view.MotionEvent;
 import android.view.View;
 import android.webkit.MimeTypeMap;
 import android.webkit.WebResourceRequest;
@@ -46,26 +50,29 @@ import java.util.regex.Pattern;
 public class MainActivity extends AppCompatActivity {
     public final static String FILE_LIST = "SAVED_FILE_LIST";
     private final String homePage = "https://www.google.co.jp/";
-    //private Context mContext;
-    //private Spinner savedPageSpinner;
     private ImageButton backBtn, forwardBtn, crawlBtn, goBtn;
     private EditText urlBox;
     private ArrayList<StringAndMeta> mTitleList;
-    private ArrayAdapter<StringAndMeta> mDrawerArrayAdapter;
+    private DrawerListAdapter mDrawerArrayAdapter;
     private WebView mWebView;
     private SQLiteDatabase mDB;
     private CrawlResultReceiver mCrawlResultReceiver;
     private DrawerLayout mDrawerLayout;
+    private RecyclerView mRecyclerView;
     private ActionBarDrawerToggle mDrawerToggle;
+    private LinearLayoutManager mLayoutManager;
     private ListView mDrawerList;
     private Toolbar mToolbar;
 
-    private static class StringAndMeta {
+
+    public static class StringAndMeta {
         private String mTitle, mMeta;
+        private Bitmap mIcon;
 
         public StringAndMeta(String title, String meta) {
             mTitle = title;
             mMeta = meta;
+
         }
 
         public String getTitle() {
@@ -97,19 +104,13 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-
-        //mContext = getApplicationContext();
-
-        // Create RequestQueue
-        //mRequestQueue = new Volley().newRequestQueue(MainActivity.this);
-
         // Get database object
         PageDBHelper dbHelper = new PageDBHelper(this);
         mDB = dbHelper.getWritableDatabase();
 
         mToolbar = (Toolbar)findViewById(R.id.actionbar);
         mDrawerLayout = (DrawerLayout)findViewById(R.id.drawer_layout);
-        mDrawerList = (ListView)findViewById(R.id.drawer_list);
+        mRecyclerView = (RecyclerView)findViewById(R.id.drawer_list);
         mDrawerToggle = new ActionBarDrawerToggle(
                 MainActivity.this,
                 mDrawerLayout,
@@ -129,6 +130,13 @@ public class MainActivity extends AppCompatActivity {
                 invalidateOptionsMenu(); // creates call to onPrepareOptionsMenu()
             }
         };
+
+        final GestureDetector singleTapDetector = new GestureDetector(
+                MainActivity.this, new GestureDetector.SimpleOnGestureListener(){
+            @Override
+            public boolean onSingleTapUp(MotionEvent e) { return true; }
+        });
+
         // Set Drawer Listener
         mDrawerLayout.addDrawerListener(mDrawerToggle);
 
@@ -147,24 +155,43 @@ public class MainActivity extends AppCompatActivity {
                 mTitleList = new ArrayList<StringAndMeta>(titles);
                 mTitleList.add(0, new StringAndMeta("Home", homePage));
                 //mTitleList.add(0, new StringAndMeta("", ""));
-                mDrawerArrayAdapter = new ArrayAdapter<StringAndMeta>(MainActivity.this,
-                        R.layout.spinner_item, mTitleList);
+                mDrawerArrayAdapter = new DrawerListAdapter(mTitleList);
+                mRecyclerView.setAdapter(mDrawerArrayAdapter);
+                mLayoutManager = new LinearLayoutManager(MainActivity.this);
+                mRecyclerView.setLayoutManager(mLayoutManager);
 
-                mDrawerList.setAdapter(mDrawerArrayAdapter);
-
-                mDrawerList.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+                mRecyclerView.addOnItemTouchListener(new RecyclerView.OnItemTouchListener() {
                     @Override
-                    public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
-                        if (position == 0) {
-                            mWebView.loadUrl(((StringAndMeta) parent.getItemAtPosition(position)).getMeta());
-                        } else {
-                            StringAndMeta pm = (StringAndMeta) parent.getItemAtPosition(position);
-                            String strHtml = getContent(pm.getMeta());
-                            mWebView.loadDataWithBaseURL(pm.getMeta(), strHtml, "text/html", "UTF-8", "");
-                            //mWebView.loadData(strHtml, "text/html", "UTF-8");
+                    public boolean onInterceptTouchEvent(RecyclerView rv, MotionEvent e) {
+                        View child = mRecyclerView.findChildViewUnder(e.getX(), e.getY());
+                        if (child != null && singleTapDetector.onTouchEvent(e)) {
+                            int position = mRecyclerView.getChildLayoutPosition(child);
+                            if (position == 0) {
+                                mWebView.loadUrl(mDrawerArrayAdapter.getItem(position).getMeta());
+                            } else {
+                                StringAndMeta pm = mDrawerArrayAdapter.getItem(position);
+                                String strHtml = getContent(pm.getMeta());
+                                mWebView.loadDataWithBaseURL(pm.getMeta(), strHtml, "text/html", "UTF-8", "");
+                            }
+                            mDrawerLayout.closeDrawers();
+                            return true;
                         }
+                        return false;
+                    }
+
+                    @Override
+                    public void onTouchEvent(RecyclerView rv, MotionEvent e) {
+
+                    }
+
+                    @Override
+                    public void onRequestDisallowInterceptTouchEvent(boolean disallowIntercept) {
+
                     }
                 });
+
+
+                mDrawerToggle.syncState();
 
 
             }

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="@dimen/drawer_header_height"
+    android:paddingBottom="8dp"
+    android:paddingRight="8dp"
+    android:background="@drawable/header_background"
+    android:gravity="right|center_vertical">
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:id="@+id/header_text"
+        android:text="@string/drawer_header"
+        android:textSize="@dimen/drawer_header_text_size"
+        android:textColor="#ffffff" />
+
+</LinearLayout>
