@@ -21,7 +21,9 @@
             </intent-filter>
         </activity>
 
-        <service android:name=".CrawlService" />
+        <service
+            android:name=".CrawlService"
+            android:exported="false" />
     </application>
 
 </manifest>

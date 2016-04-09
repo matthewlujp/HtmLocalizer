@@ -1,52 +1,39 @@
 package com.example.luning.htmlocalizer;
 
+import android.app.Activity;
+import android.app.IntentService;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
-import android.app.Service;
-import android.content.ContentValues;
-import android.content.Context;
 import android.content.Intent;
 import android.database.sqlite.SQLiteDatabase;
-import android.database.sqlite.SQLiteOpenHelper;
-import android.database.sqlite.SQLiteStatement;
-import android.os.AsyncTask;
-import android.os.Binder;
-import android.os.IBinder;
+import android.os.Bundle;
+import android.os.ResultReceiver;
 import android.util.Log;
-
-import com.android.volley.Request;
-import com.android.volley.Response;
-import com.android.volley.VolleyError;
-import com.android.volley.toolbox.StringRequest;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.net.BindException;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.ProtocolException;
 import java.net.URL;
 import java.util.ArrayList;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
+
 
 
 /**
  * Created by luning on 2016/04/03.
  */
-public class CrawlService extends Service {
-    private final IBinder mBinder = new LocalBinder();
-    private static final int JOB_MAX_LIMIT = 80;
+public class CrawlService extends IntentService {
+    //private final IBinder mBinder = new LocalBinder();
+    private static int CORE_POOL_SIZE = 4, MAX_POOL_SIZE = 8;
+    private static long KEEP_ALIVE_TIME = 5000;
     private static final int CRAWLED_AMOUNT_LIMIT = 6000;
     private static long PAGE_TRANSACTION_BATCH_SIZE = 200;
     private static long IMAGE_TRANSACTION_BATCH_SIZE = 500;
@@ -55,28 +42,21 @@ public class CrawlService extends Service {
     private DBTransactionManager<PageDBHelper.ImageRecord> mImageDBTM;
     private Page mStartPage;
     private String mStartPageTitle;
-    private boolean stop_flag = true;
-    private ArrayList<Crawler> mTaskQueue = new ArrayList<Crawler>();
-    private ArrayBlockingQueue<Crawler> mOnRunQueue = new ArrayBlockingQueue<Crawler>(JOB_MAX_LIMIT);
     private ArrayList<URL> mVisitedLinks;
-    private final Lock lock = new ReentrantLock();
-    private final Lock ntfLock = new ReentrantLock();
-    private final Condition taskNotFull = lock.newCondition(),
-        taskNotEmpty = lock.newCondition(),
-        taskNotTooMany = lock.newCondition();
     private ThreadPoolExecutor mCrawlExecutor;
+    private int mServiceId = 0;
+    public static final String START_URL_TAG = "start_url";
+    public static final String CURRENT_STATUS = "current_status";
+    public static final int PAGES_COMPLETED = 1, IMAGES_COMPLETED = 2, LOCALIZING_FAILED = 3;
+    private ResultReceiver mReceiver;
 
-    private static int CORE_POOL_SIZE = 4, MAX_POOL_SIZE = 8;
-    private static long KEEP_ALIVE_TIME = 5000;
-
-    public class LocalBinder extends Binder {
-        CrawlService getService() {
-            return CrawlService.this;
-        }
+    public CrawlService() {
+        super("CrawlService");
     }
 
     @Override
     public void onCreate() {
+        super.onCreate();
         // Get database object
         PageDBHelper dbHelper = new PageDBHelper(this);
         mDB = dbHelper.getWritableDatabase();
@@ -85,13 +65,15 @@ public class CrawlService extends Service {
     }
 
     @Override
-    public IBinder onBind(Intent intent) {
-        return mBinder;
-    }
+    protected void onHandleIntent(Intent intent) {
+        String startUrl = intent.getStringExtra(START_URL_TAG);
+        mReceiver = intent.getParcelableExtra("receiver");
+        mServiceId = 100;
+        Notification.Builder builder = notificationBuilderFactory("HtmLocalizer - " + startUrl,
+                "Initiate localizing...", R.mipmap.ic_launcher);
+        showNotification(mServiceId, builder);
 
-    @Override
-    public void onDestroy() {
-
+        crawlPages(startUrl);
     }
 
     public void crawlPages(final String startUrl) {
@@ -99,90 +81,86 @@ public class CrawlService extends Service {
                 KEEP_ALIVE_TIME, TimeUnit.MICROSECONDS,
                 new LinkedBlockingQueue<Runnable>());
 
-        Runnable crawlController = new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    mPageDBTM.initializeTransaction(PageDBHelper.PAGE_TRANSACTION_SQL);
-                } catch (Exception e) {
-                    Log.e("crawlPages", e.toString());
-                    return;
+        try {
+            mPageDBTM.initializeTransaction(PageDBHelper.PAGE_TRANSACTION_SQL);
+        } catch (Exception e) {
+            Log.e("crawlPages", e.toString());
+            return;
+        }
+        try {
+            mImageDBTM.initializeTransaction(PageDBHelper.IMAGE_TRANSACTION_SQL);
+        } catch (Exception e) {
+            Log.e("crawlPages", e.toString());
+            return;
+        }
+        mVisitedLinks = new ArrayList<URL>();
+        try {
+            mStartPage = new Page(new URL(startUrl));
+        } catch (MalformedURLException e) {
+            Log.e("crawlPage", e.toString());
+            return;
+        } catch (Exception e) {
+            Log.e("crawlPage", e.toString());
+            return;
+        }
+
+        try {
+            mCrawlExecutor.execute(new Crawler(mStartPage.getPageUrl()));
+        } catch (Exception e) {
+            Log.e("crawlPages", e.toString());
+        }
+
+        // Wait till crawling process ends
+        do {
+            try {
+                synchronized (this) {
+                    wait(4000);
                 }
-                try {
-                    mImageDBTM.initializeTransaction(PageDBHelper.IMAGE_TRANSACTION_SQL);
-                } catch (Exception e) {
-                    Log.e("crawlPages", e.toString());
-                    return;
-                }
-                mVisitedLinks = new ArrayList<URL>();
-                try {
-                    mStartPage = new Page(new URL(startUrl));
-                } catch (MalformedURLException e) {
-                    Log.e("crawlPage", e.toString());
-                    return;
-                } catch (Exception e) {
-                    Log.e("crawlPage", e.toString());
-                    return;
-                }
-
-                try {
-                    mCrawlExecutor.execute(new Crawler(mStartPage.getPageUrl()));
-                } catch (Exception e) {
-                    Log.e("crawlPages", e.toString());
-                }
-
-                // Wait till crawling process ends
-                do {
-                    try {
-                        synchronized (this) {
-                            wait(4000);
-                        }
-                    } catch (Exception e) { Log.e("crawlPages", e.toString()); }
-                } while (mCrawlExecutor.getQueue().size() > 0);
+            } catch (Exception e) { Log.e("crawlPages", e.toString()); }
+        } while (mCrawlExecutor.getQueue().size() > 0);
 
 
-                Notification.Builder nftBuilder = notificationBuilderFactory("HtmLocalizer - " +
-                        mStartPageTitle, "Crawling completed. Saving...", R.mipmap.ic_launcher);
-                nftBuilder.setProgress(0, 0, true);
-                showNotification(R.layout.activity_main, nftBuilder);
+        Notification.Builder nftBuilder = notificationBuilderFactory("HtmLocalizer - " +
+                mStartPageTitle, "Crawling completed. Saving...", R.mipmap.ic_launcher);
+        nftBuilder.setProgress(0, 0, true);
+        showNotification(mServiceId, nftBuilder);
 
-                // Save pages to database
-                try {
-                    mPageDBTM.commitTransaction(false);
-                } catch (Exception e) {
-                    Log.e("crawlPages", e.toString());
-                }
+        // Save pages to database
+        try {
+            mPageDBTM.commitTransaction(false);
+        } catch (Exception e) {
+            Log.e("crawlPages", e.toString());
+        }
 
-                nftBuilder = notificationBuilderFactory("HtmLocalizer - " + mStartPageTitle,
-                        "Pages saved. Saving images...", R.mipmap.ic_launcher);
-                nftBuilder.setProgress(0, 0, true);
-                showNotification(R.layout.activity_main, nftBuilder);
+        nftBuilder = notificationBuilderFactory("HtmLocalizer - " + mStartPageTitle,
+                "Pages saved. Saving images...", R.mipmap.ic_launcher);
+        nftBuilder.setProgress(0, 0, true);
+        showNotification(mServiceId, nftBuilder);
 
-                // Save images to database
-                try {
-                    mImageDBTM.commitTransaction(false);
-                } catch (Exception e) {
-                    Log.e("crawlPages", e.toString());
-                }
+        // Save images to database
+        try {
+            mImageDBTM.commitTransaction(false);
+        } catch (Exception e) {
+            Log.e("crawlPages", e.toString());
+        }
 
-                nftBuilder = notificationBuilderFactory("HtmLocalizer - " + mStartPageTitle,
-                        "Localizing completed.", R.mipmap.ic_launcher);
-                showNotification(R.layout.activity_main, nftBuilder);
-            }
-        };
-        mCrawlExecutor.execute(crawlController);
+        nftBuilder = notificationBuilderFactory("HtmLocalizer - " + mStartPageTitle,
+                "Localizing completed.", R.mipmap.ic_launcher);
+        showNotification(mServiceId, nftBuilder);
+
+        // Notify MainActivity page localization completion
+        Log.e("sendResult", "page");
+        Bundle pageInfoBundle = new Bundle();
+        pageInfoBundle.putInt(CURRENT_STATUS, PAGES_COMPLETED);
+        mReceiver.send(Activity.RESULT_OK, pageInfoBundle);
+
+        // Notify MainActivity image localization completion
+        Log.e("sendResult", "image");
+        Bundle imageInfoBundle = new Bundle();
+        imageInfoBundle.putInt(CURRENT_STATUS, IMAGES_COMPLETED);
+        mReceiver.send(Activity.RESULT_OK, imageInfoBundle);
+
     }
-
-    protected Notification.Builder notificationBuilderFactory(
-            String title, CharSequence text, int icon) {
-        Notification.Builder builder = new Notification.Builder(this);
-        builder.setWhen(System.currentTimeMillis());
-        builder.setContentTitle(title);
-        builder.setContentText(text);
-        builder.setSmallIcon(icon);
-        return builder;
-    }
-
 
     private class Crawler implements Runnable {
         private URL mUrl;
@@ -230,7 +208,7 @@ public class CrawlService extends Service {
                 Notification.Builder nftBuilder = notificationBuilderFactory(
                         "HtmLocalizer - " + mStartPageTitle, ntfMsg, R.mipmap.ic_launcher);
                 nftBuilder.setProgress(0, 0, true);
-                showNotification(R.layout.activity_main, nftBuilder);
+                showNotification(mServiceId, nftBuilder);
             }
 
             // Find new links
@@ -343,6 +321,16 @@ public class CrawlService extends Service {
         return stringBuilder.toString();
     }
 
+    protected Notification.Builder notificationBuilderFactory(
+            String title, CharSequence text, int icon) {
+        Notification.Builder builder = new Notification.Builder(CrawlService.this);
+        builder.setWhen(System.currentTimeMillis());
+        builder.setContentTitle(title);
+        builder.setContentText(text);
+        builder.setSmallIcon(icon);
+        return builder;
+    }
+
     protected void showNotification(int notificationId, Notification.Builder builder) {
         Intent intent = new Intent(this, MainActivity.class);
         intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
@@ -354,5 +342,4 @@ public class CrawlService extends Service {
         notificationManager.notify(notificationId, builder.build());
     }
 
-    public void cancelTask() { stop_flag = true; }
 }

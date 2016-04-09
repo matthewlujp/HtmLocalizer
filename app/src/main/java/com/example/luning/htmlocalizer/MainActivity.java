@@ -1,20 +1,28 @@
 package com.example.luning.htmlocalizer;
 
+import android.app.Notification;
+import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.res.Configuration;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.graphics.Bitmap;
 import android.os.AsyncTask;
 import android.os.Handler;
-import android.os.IBinder;
 import android.support.annotation.Nullable;
+import android.support.design.widget.AppBarLayout;
+import android.support.design.widget.NavigationView;
+import android.support.v4.widget.DrawerLayout;
+import android.support.v7.app.ActionBarDrawerToggle;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.support.v7.widget.Toolbar;
 import android.util.Log;
 import android.view.KeyEvent;
+import android.view.MenuItem;
 import android.view.View;
 import android.webkit.MimeTypeMap;
 import android.webkit.WebResourceRequest;
@@ -26,11 +34,9 @@ import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.ImageButton;
+import android.widget.ListView;
 import android.widget.Spinner;
 import android.widget.Toast;
-
-import com.android.volley.RequestQueue;
-import com.android.volley.toolbox.Volley;
 
 import java.io.ByteArrayInputStream;
 import java.util.ArrayList;
@@ -40,19 +46,19 @@ import java.util.regex.Pattern;
 public class MainActivity extends AppCompatActivity {
     public final static String FILE_LIST = "SAVED_FILE_LIST";
     private final String homePage = "https://www.google.co.jp/";
-    private Context mContext;
-    private Spinner savedPageSpinner;
+    //private Context mContext;
+    //private Spinner savedPageSpinner;
     private ImageButton backBtn, forwardBtn, crawlBtn, goBtn;
     private EditText urlBox;
-    private ArrayList<StringAndMeta> spinnerTitleList;
-    private ArrayAdapter<StringAndMeta> spinnerArrayAdapter;
+    private ArrayList<StringAndMeta> mTitleList;
+    private ArrayAdapter<StringAndMeta> mDrawerArrayAdapter;
     private WebView mWebView;
-    private RequestQueue mRequestQueue;
-    private CrawlService mCrawlService;
     private SQLiteDatabase mDB;
-
-
-
+    private CrawlResultReceiver mCrawlResultReceiver;
+    private DrawerLayout mDrawerLayout;
+    private ActionBarDrawerToggle mDrawerToggle;
+    private ListView mDrawerList;
+    private Toolbar mToolbar;
 
     private static class StringAndMeta {
         private String mTitle, mMeta;
@@ -91,18 +97,43 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        mContext = getApplicationContext();
+
+        //mContext = getApplicationContext();
 
         // Create RequestQueue
-        mRequestQueue = new Volley().newRequestQueue(MainActivity.this);
+        //mRequestQueue = new Volley().newRequestQueue(MainActivity.this);
 
         // Get database object
         PageDBHelper dbHelper = new PageDBHelper(this);
         mDB = dbHelper.getWritableDatabase();
 
-        // Prepare for crawl service
-        Intent intent = new Intent(getApplicationContext(), CrawlService.class);
-        bindService(intent, mCrawlServiceConnection, Context.BIND_AUTO_CREATE);
+        mToolbar = (Toolbar)findViewById(R.id.actionbar);
+        mDrawerLayout = (DrawerLayout)findViewById(R.id.drawer_layout);
+        mDrawerList = (ListView)findViewById(R.id.drawer_list);
+        mDrawerToggle = new ActionBarDrawerToggle(
+                MainActivity.this,
+                mDrawerLayout,
+                mToolbar,
+                R.string.drawer_open,
+                R.string.drawer_close) {
+
+            /** Called when a drawer has settled in a completely closed state. */
+            public void onDrawerClosed(View view) {
+                super.onDrawerClosed(view);
+                invalidateOptionsMenu(); // creates call to onPrepareOptionsMenu()
+            }
+
+            /** Called when a drawer has settled in a completely open state. */
+            public void onDrawerOpened(View drawerView) {
+                super.onDrawerOpened(drawerView);
+                invalidateOptionsMenu(); // creates call to onPrepareOptionsMenu()
+            }
+        };
+        // Set Drawer Listener
+        mDrawerLayout.addDrawerListener(mDrawerToggle);
+
+        setSupportActionBar(mToolbar);
+        getSupportActionBar().setDisplayShowHomeEnabled(true);
 
         // Read the list of saved pages
         new AsyncTask<String, Void, ArrayList<StringAndMeta>>() {
@@ -113,35 +144,33 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             protected void onPostExecute(ArrayList<StringAndMeta> titles) {
-                spinnerTitleList = new ArrayList<StringAndMeta>(titles);
-                spinnerTitleList.add(0, new StringAndMeta("Home", homePage));
-                spinnerTitleList.add(0, new StringAndMeta("", ""));
-                spinnerArrayAdapter = new ArrayAdapter<StringAndMeta>(
-                        mContext, R.layout.spinner_item, spinnerTitleList);
-                spinnerArrayAdapter.setDropDownViewResource(R.layout.spinner_dropdown_item);
-                savedPageSpinner = (Spinner)findViewById(R.id.saved_pages_spr);
-                savedPageSpinner.setAdapter(spinnerArrayAdapter);
-                savedPageSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+                mTitleList = new ArrayList<StringAndMeta>(titles);
+                mTitleList.add(0, new StringAndMeta("Home", homePage));
+                //mTitleList.add(0, new StringAndMeta("", ""));
+                mDrawerArrayAdapter = new ArrayAdapter<StringAndMeta>(MainActivity.this,
+                        R.layout.spinner_item, mTitleList);
+
+                mDrawerList.setAdapter(mDrawerArrayAdapter);
+
+                mDrawerList.setOnItemClickListener(new AdapterView.OnItemClickListener() {
                     @Override
-                    public void onItemSelected(AdapterView<?> parent, View view, int pos, long id) {
-                        if (pos == 0) {
-                            // Do nothing
-                        } else if (pos == 1) {
-                            mWebView.loadUrl(((StringAndMeta) parent.getItemAtPosition(pos)).getMeta());
+                    public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                        if (position == 0) {
+                            mWebView.loadUrl(((StringAndMeta) parent.getItemAtPosition(position)).getMeta());
                         } else {
-                            StringAndMeta pm = (StringAndMeta) parent.getItemAtPosition(pos);
+                            StringAndMeta pm = (StringAndMeta) parent.getItemAtPosition(position);
                             String strHtml = getContent(pm.getMeta());
                             mWebView.loadDataWithBaseURL(pm.getMeta(), strHtml, "text/html", "UTF-8", "");
                             //mWebView.loadData(strHtml, "text/html", "UTF-8");
                         }
                     }
-
-                    @Override
-                    public void onNothingSelected(AdapterView<?> parent) {
-                    }
                 });
+
+
             }
         }.execute(FILE_LIST);
+
+
 
         // Create web view
         mWebView = (WebView)findViewById(R.id.webView);
@@ -191,7 +220,7 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Nullable
-            public WebResourceResponse loadTextAssetsFromDB (String url) {
+            public WebResourceResponse loadTextAssetsFromDB(String url) {
                 Cursor assetFileInfo = getPageCursor(url, new String[]{"content"});
                 if (assetFileInfo != null && assetFileInfo.getCount() > 0) {
                     assetFileInfo.moveToFirst();
@@ -230,14 +259,11 @@ public class MainActivity extends AppCompatActivity {
                 if (extension != null) {
                     if (extension.equals("js")) {
                         return "text/javascript";
-                    }
-                    else if (extension.equals("jpg") || extension.equals("jpeg") ||extension.equals("JPG")) {
+                    } else if (extension.equals("jpg") || extension.equals("jpeg") || extension.equals("JPG")) {
                         return "image/*";
-                    }
-                    else if (extension.equals("png")) {
+                    } else if (extension.equals("png")) {
                         return "image/*";
-                    }
-                    else if (extension.equals("svg")) {
+                    } else if (extension.equals("svg")) {
                         return "image/svg+xml";
                     }
                     type = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
@@ -290,6 +316,36 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        mCrawlResultReceiver = new CrawlResultReceiver(new Handler());
+        mCrawlResultReceiver.setReceiver(new CrawlResultReceiver.Receiver(){
+            @Override
+            public void onReceiveResult(int resultCode, Bundle resultData) {
+                Log.e("onResultReceive", String.valueOf(resultCode));
+                if (resultCode == RESULT_OK) {
+                    Log.e("onResultReceive", "OK");
+                    String msg;
+                    Log.e("onResultReceive", "status - " + String.valueOf(resultData.getInt(CrawlService.CURRENT_STATUS)));
+                    switch (resultData.getInt(CrawlService.CURRENT_STATUS)) {
+                        case CrawlService.PAGES_COMPLETED:
+                            Log.e("onResultReceive", "page ok");
+                            modifyMenu();
+                            msg = "Localizing pages completed.";
+                            break;
+                        case CrawlService.IMAGES_COMPLETED:
+                            msg = "Localizing pages completed.";
+                            break;
+                        case CrawlService.LOCALIZING_FAILED:
+                            msg = "Localizing failed.";
+                            break;
+                        default:
+                            msg = "Something happened.";
+                    }
+                    Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
+                }
+            }
+
+        });
+
         crawlBtn = (ImageButton)findViewById(R.id.crawlBtn);
         crawlBtn.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -299,7 +355,10 @@ public class MainActivity extends AppCompatActivity {
                     startUrl = mWebView.getUrl();
                 }
                 try {
-                    mCrawlService.crawlPages(startUrl);
+                    Intent intent = new Intent(MainActivity.this, CrawlService.class);
+                    intent.putExtra(CrawlService.START_URL_TAG, startUrl);
+                    intent.putExtra("receiver", mCrawlResultReceiver);
+                    startService(intent);
                 } catch (Exception e) {
                     Log.e("onCrawlPressed", e.toString());
                 }
@@ -323,28 +382,36 @@ public class MainActivity extends AppCompatActivity {
                 mWebView.goForward();
             }
         });
+
+
+
     }
 
-    private ServiceConnection mCrawlServiceConnection  = new ServiceConnection() {
-        @Override
-        public void onServiceConnected(ComponentName name, IBinder service) {
-            Log.e("service", "Service connected.");
-            CrawlService.LocalBinder binder = (CrawlService.LocalBinder)service;
-            mCrawlService = binder.getService();
-
-
-        }
-
-        @Override
-        public void onServiceDisconnected(ComponentName name) {
-        }
-    };
 
     @Override
     public void onDestroy() {
         // Destroy service
-        unbindService(mCrawlServiceConnection);
         super.onDestroy();
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (mDrawerToggle.onOptionsItemSelected(item)) {
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    @Override
+    protected void onPostCreate(Bundle savedInstanceState) {
+        super.onPostCreate(savedInstanceState);
+        mDrawerToggle.syncState();
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        mDrawerToggle.onConfigurationChanged(newConfig);
     }
 
 
@@ -357,11 +424,11 @@ public class MainActivity extends AppCompatActivity {
         return strURL;
     }
 
-    protected void modifySpinner() {
-        spinnerTitleList = getMainPages();
-        spinnerTitleList.add(new StringAndMeta("Home", homePage));
-        spinnerTitleList.add(new StringAndMeta("", ""));
-        spinnerArrayAdapter.notifyDataSetChanged();
+    protected void modifyMenu() {
+        mTitleList.clear();
+        mTitleList.addAll(getMainPages());
+        mTitleList.add(0, new StringAndMeta("Home", homePage));
+        mDrawerArrayAdapter.notifyDataSetChanged();
     }
 
     protected String getContent(String strUrl) {
