@@ -1,6 +1,5 @@
 package com.example.luning.htmlocalizer;
 
-import android.app.Notification;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.database.Cursor;
@@ -30,21 +29,26 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.ImageButton;
-import android.widget.ListView;
 import android.widget.Toast;
 
 import java.io.ByteArrayInputStream;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity
+        implements View.OnKeyListener, View.OnFocusChangeListener,
+        CrawlResultReceiver.Receiver, View.OnClickListener, RecyclerView.OnItemTouchListener {
     public final static String FILE_LIST = "SAVED_FILE_LIST";
-    private final String homePage = "https://www.google.co.jp/";
-    private ImageButton backBtn, forwardBtn, crawlBtn, goBtn;
+    private static final int TAG_GO_BUTTON = 0;
+    private static final int TAG_CRAWL_BUTTON = 1;
+    private static final int TAG_BACK_BUTTON = 2;
+    private static final int TAG_FORWARD_BUTTON = 3;
+    private static final int TAG_REFRESH_BUTTON = 4;
+    private static final String mHomePage = "https://www.google.co.jp/";
+    private ImageButton backBtn, forwardBtn, crawlBtn, goBtn, refreshBtn;
     private EditText urlBox;
-    private ArrayList<SiteListItem> mTitleList;
+    private final ArrayList<SiteListItem> mTitleList = new ArrayList<SiteListItem>();
     private DrawerListAdapter mDrawerArrayAdapter;
     private WebView mWebView;
     private SQLiteDatabase mDB;
@@ -52,93 +56,8 @@ public class MainActivity extends AppCompatActivity {
     private DrawerLayout mDrawerLayout;
     private RecyclerView mRecyclerView;
     private ActionBarDrawerToggle mDrawerToggle;
-    private LinearLayoutManager mLayoutManager;
     private Toolbar mToolbar;
-
-
-    protected ActionBarDrawerToggle actionBarDrawerToggleFactory(
-            DrawerLayout layout, Toolbar toolbar) {
-        return new ActionBarDrawerToggle(MainActivity.this, layout, toolbar,
-                R.string.drawer_open, R.string.drawer_close) {
-            public void onDrawerClosed(View view) {
-                super.onDrawerClosed(view);
-                invalidateOptionsMenu(); // creates call to onPrepareOptionsMenu()
-            }
-
-            public void onDrawerOpened(View drawerView) {
-                super.onDrawerOpened(drawerView);
-                invalidateOptionsMenu(); // creates call to onPrepareOptionsMenu()
-            }
-        };
-    }
-
-    private final AsyncTask<String, Void, ArrayList<SiteListItem>> siteListCreator
-            = new AsyncTask<String, Void, ArrayList<SiteListItem>>() {
-        @Override
-        protected ArrayList<SiteListItem> doInBackground(String... params) {
-            return getMainPages();
-        }
-
-        @Override
-        protected void onPostExecute(ArrayList<SiteListItem> titles) {
-            mTitleList = new ArrayList<SiteListItem>(titles);
-            mTitleList.add(0, new SiteListItem("Home", homePage));
-            //mTitleList.add(0, new SiteListItem("", ""));
-            mDrawerArrayAdapter = new DrawerListAdapter(mTitleList);
-            mRecyclerView.setAdapter(mDrawerArrayAdapter);
-            mLayoutManager = new LinearLayoutManager(MainActivity.this);
-            mRecyclerView.setLayoutManager(mLayoutManager);
-
-            final GestureDetector singleTapDetector = new GestureDetector(
-                    MainActivity.this, new GestureDetector.SimpleOnGestureListener(){
-                @Override
-                public boolean onSingleTapUp(MotionEvent e) { return true; }
-            });
-
-            mRecyclerView.addOnItemTouchListener(new RecyclerView.OnItemTouchListener() {
-                @Override
-                public boolean onInterceptTouchEvent(RecyclerView rv, MotionEvent e) {
-                    View child = mRecyclerView.findChildViewUnder(e.getX(), e.getY());
-                    if (child != null && singleTapDetector.onTouchEvent(e)) {
-                        int position = mRecyclerView.getChildLayoutPosition(child);
-                        if (position == 0) {
-                            mWebView.loadUrl(mDrawerArrayAdapter.getItem(position).getURL());
-                        } else {
-                            SiteListItem pm = mDrawerArrayAdapter.getItem(position);
-                            String strHtml = getContent(pm.getURL());
-                            mWebView.loadDataWithBaseURL(pm.getURL(), strHtml, "text/html", "UTF-8", "");
-                        }
-                        mDrawerLayout.closeDrawers();
-                        return true;
-                    }
-                    return false;
-                }
-
-                @Override
-                public void onTouchEvent(RecyclerView rv, MotionEvent e) {
-
-                }
-
-                @Override
-                public void onRequestDisallowInterceptTouchEvent(boolean disallowIntercept) {
-
-                }
-            });
-
-
-            mDrawerToggle.syncState();
-
-
-        }
-    };
-
-    protected void configureWebView(WebView webView) {
-        WebSettings settings = mWebView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setSaveFormData(false);
-        settings.setSupportZoom(true);
-    }
-
+    private GestureDetector mSingleTapDetector;
 
 
     @Override
@@ -150,135 +69,53 @@ public class MainActivity extends AppCompatActivity {
         PageDBHelper dbHelper = new PageDBHelper(this);
         mDB = dbHelper.getWritableDatabase();
 
+        mSingleTapDetector = new GestureDetector(this, mSimpleOnGestureListener);
         mToolbar = (Toolbar)findViewById(R.id.actionbar);
         setSupportActionBar(mToolbar);
         getSupportActionBar().setDisplayShowHomeEnabled(true);
         mDrawerLayout = (DrawerLayout)findViewById(R.id.drawer_layout);
-        mRecyclerView = (RecyclerView)findViewById(R.id.drawer_list);
         mDrawerToggle = actionBarDrawerToggleFactory(mDrawerLayout, mToolbar);
         mDrawerLayout.addDrawerListener(mDrawerToggle);
+        mDrawerArrayAdapter = new DrawerListAdapter(mTitleList);
+        mRecyclerView = (RecyclerView)findViewById(R.id.drawer_list);
+        mRecyclerView.setAdapter(mDrawerArrayAdapter);
+        mRecyclerView.setLayoutManager(new LinearLayoutManager(this));
+        mRecyclerView.addOnItemTouchListener(this);
+        mDrawerToggle.syncState();
 
         siteListCreator.execute(FILE_LIST);
 
         // Create web view
         mWebView = (WebView)findViewById(R.id.webView);
         configureWebView(mWebView);
-
         mWebView.setWebViewClient(mWebViewClient);
-        mWebView.loadUrl(homePage);
+        mWebView.loadUrl(mHomePage);
 
-        goBtn = (ImageButton)findViewById(R.id.goBtn);
+        // Buttons
         urlBox = (EditText)findViewById(R.id.urlBox);
-        urlBox.setOnKeyListener(new View.OnKeyListener() {
-            // Enter key = Go
-            public boolean onKey(View v, int keyCode, KeyEvent event) {
-                // If the event is a key-down event on the "enter" button
-                if ((event.getAction() == KeyEvent.ACTION_DOWN) &&
-                        (keyCode == KeyEvent.KEYCODE_ENTER)) {
-                    String strUrl = urlBox.getText().toString();
-                    if (!strUrl.equals("")) {
-                        mWebView.loadUrl(completeURL(strUrl));
-                    }
-                    return true;
-                }
-                return false;
-            }
-        });
-
-        urlBox.setOnFocusChangeListener(new View.OnFocusChangeListener() {
-            @Override
-            public void onFocusChange(View v, boolean hasFocus) {
-                if (hasFocus) {
-                    if (urlBox.getText().toString().equals("")) {
-                        urlBox.setText(mWebView.getUrl());
-                    }
-                    urlBox.selectAll();
-                }
-            }
-        });
-
-        goBtn.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                String strUrl = urlBox.getText().toString();
-                if (strUrl.equals("")) {
-                    Toast.makeText(MainActivity.this, "Please specify a URL.", Toast.LENGTH_SHORT);
-                    return;
-                } else {
-                    mWebView.loadUrl(completeURL(strUrl));
-                }
-            }
-        });
-
-        mCrawlResultReceiver = new CrawlResultReceiver(new Handler());
-        mCrawlResultReceiver.setReceiver(new CrawlResultReceiver.Receiver(){
-            @Override
-            public void onReceiveResult(int resultCode, Bundle resultData) {
-                Log.e("onResultReceive", String.valueOf(resultCode));
-                if (resultCode == RESULT_OK) {
-                    Log.e("onResultReceive", "OK");
-                    String msg;
-                    Log.e("onResultReceive", "status - " + String.valueOf(resultData.getInt(CrawlService.CURRENT_STATUS)));
-                    switch (resultData.getInt(CrawlService.CURRENT_STATUS)) {
-                        case CrawlService.PAGES_COMPLETED:
-                            Log.e("onResultReceive", "page ok");
-                            modifyMenu();
-                            msg = "Localizing pages completed.";
-                            break;
-                        case CrawlService.IMAGES_COMPLETED:
-                            msg = "Localizing pages completed.";
-                            break;
-                        case CrawlService.LOCALIZING_FAILED:
-                            msg = "Localizing failed.";
-                            break;
-                        default:
-                            msg = "Something happened.";
-                    }
-                    Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
-                }
-            }
-
-        });
-
+        urlBox.setOnKeyListener(this);
+        urlBox.setOnFocusChangeListener(this);
+        goBtn = (ImageButton)findViewById(R.id.goBtn);
+        goBtn.setTag(TAG_GO_BUTTON);
+        goBtn.setOnClickListener(this);
         crawlBtn = (ImageButton)findViewById(R.id.crawlBtn);
-        crawlBtn.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                String startUrl = urlBox.getText().toString();
-                if (startUrl.equals("")) {
-                    startUrl = mWebView.getUrl();
-                }
-                try {
-                    Intent intent = new Intent(MainActivity.this, CrawlService.class);
-                    intent.putExtra(CrawlService.START_URL_TAG, startUrl);
-                    intent.putExtra("receiver", mCrawlResultReceiver);
-                    startService(intent);
-                } catch (Exception e) {
-                    Log.e("onCrawlPressed", e.toString());
-                }
-            }
-        });
-
+        crawlBtn.setTag(TAG_CRAWL_BUTTON);
+        crawlBtn.setOnClickListener(this);
         backBtn = (ImageButton)findViewById(R.id.backBtn);
         backBtn.setEnabled(false);
-        backBtn.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                mWebView.goBack();
-            }
-        });
-
+        backBtn.setTag(TAG_BACK_BUTTON);
+        backBtn.setOnClickListener(this);
         forwardBtn = (ImageButton)findViewById(R.id.forwardBtn);
         forwardBtn.setEnabled(false);
-        forwardBtn.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                mWebView.goForward();
-            }
-        });
+        forwardBtn.setTag(TAG_FORWARD_BUTTON);
+        forwardBtn.setOnClickListener(this);
+        refreshBtn = (ImageButton)findViewById(R.id.refreshBtn);
+        refreshBtn.setTag(TAG_REFRESH_BUTTON);
+        refreshBtn.setOnClickListener(this);
 
 
-
+        mCrawlResultReceiver = new CrawlResultReceiver(new Handler());
+        mCrawlResultReceiver.setReceiver(this);
     }
 
 
@@ -309,6 +146,134 @@ public class MainActivity extends AppCompatActivity {
     }
 
 
+    // ----------------------------- Listeners -----------------------------
+    // OnClickListener
+    @Override
+    public void onClick(View view){
+        int tag = (int)view.getTag();
+        String strUrl = urlBox.getText().toString();
+        switch (tag) {
+            case TAG_GO_BUTTON:
+                if (strUrl.equals("")) {
+                    Toast.makeText(MainActivity.this, "Please specify a URL.", Toast.LENGTH_SHORT);
+                    return;
+                } else {
+                    mWebView.loadUrl(completeURL(strUrl));
+                }
+                break;
+            case TAG_CRAWL_BUTTON:
+                if (strUrl.equals("")) {
+                    strUrl = mWebView.getUrl();
+                }
+                try {
+                    Intent intent = new Intent(MainActivity.this, CrawlService.class);
+                    intent.putExtra(CrawlService.START_URL_TAG, strUrl);
+                    intent.putExtra("receiver", mCrawlResultReceiver);
+                    startService(intent);
+                } catch (Exception e) {
+                    Log.e("onCrawlPressed", e.toString());
+                }
+                break;
+            case TAG_BACK_BUTTON:
+                mWebView.goBack();
+                break;
+            case TAG_FORWARD_BUTTON:
+                mWebView.goForward();
+                break;
+            case TAG_REFRESH_BUTTON:
+                mWebView.loadUrl(mWebView.getUrl());
+                break;
+        }
+    }
+
+    // OnKeyListener
+    @Override
+    public boolean onKey(View v, int keyCode, KeyEvent event) {
+        // If the event is a key-down event on the "enter" button
+        if ((event.getAction() == KeyEvent.ACTION_DOWN) &&
+                (keyCode == KeyEvent.KEYCODE_ENTER)) {
+            String strUrl = urlBox.getText().toString();
+            if (!strUrl.equals("")) {
+                mWebView.loadUrl(completeURL(strUrl));
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // OnFocusChangedListener
+    @Override
+    public void onFocusChange(View v, boolean hasFocus) {
+        if (hasFocus) {
+            if (urlBox.getText().toString().equals("")) {
+                urlBox.setText(mWebView.getUrl());
+            }
+            urlBox.selectAll();
+        }
+    }
+
+    // CrawlResultReceiver.Receiver
+    @Override
+    public void onReceiveResult(int resultCode, Bundle resultData) {
+        if (resultCode == RESULT_OK) {
+            String msg;
+            switch (resultData.getInt(CrawlService.CURRENT_STATUS)) {
+                case CrawlService.PAGES_COMPLETED:
+                    // Log.e("onResultReceive", "page ok");
+                    modifyMenu();
+                    msg = "Localizing pages completed.";
+                    break;
+                case CrawlService.IMAGES_COMPLETED:
+                    msg = "Localizing pages completed.";
+                    break;
+                case CrawlService.LOCALIZING_FAILED:
+                    msg = "Localizing failed.";
+                    break;
+                default:
+                    msg = "Something happened.";
+            }
+            Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    // RecyclerView.OnItemTouchListener
+    @Override
+    public boolean onInterceptTouchEvent(RecyclerView rv, MotionEvent e) {
+        View child = mRecyclerView.findChildViewUnder(e.getX(), e.getY());
+        if (child != null && mSingleTapDetector.onTouchEvent(e)) {
+            int position = mRecyclerView.getChildLayoutPosition(child);
+            if (position == 0) {
+                mWebView.loadUrl(mDrawerArrayAdapter.getItem(position).getURL());
+            } else {
+                SiteListItem pm = mDrawerArrayAdapter.getItem(position);
+                String strHtml = getContent(pm.getURL());
+                mWebView.loadDataWithBaseURL(pm.getURL(), strHtml, "text/html", "UTF-8", "");
+            }
+            mDrawerLayout.closeDrawers();
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public void onTouchEvent(RecyclerView rv, MotionEvent e) {
+
+    }
+
+    @Override
+    public void onRequestDisallowInterceptTouchEvent(boolean disallowIntercept) {
+
+    }
+
+
+    // ----------------------------- Utility methods -----------------------------
+    protected void configureWebView(WebView webView) {
+        WebSettings settings = mWebView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setSaveFormData(false);
+        settings.setSupportZoom(true);
+    }
+
     protected String completeURL(String strURL) {
         Pattern hrefPattern = Pattern.compile("http://|https://");
         Matcher matcher = hrefPattern.matcher(strURL);
@@ -321,7 +286,14 @@ public class MainActivity extends AppCompatActivity {
     protected void modifyMenu() {
         mTitleList.clear();
         mTitleList.addAll(getMainPages());
-        mTitleList.add(0, new SiteListItem("Home", homePage));
+        mTitleList.add(0, new SiteListItem("Home", mHomePage));
+        mDrawerArrayAdapter.notifyDataSetChanged();
+    }
+
+    protected void modifyMenu(ArrayList<SiteListItem> items) {
+        mTitleList.clear();
+        mTitleList.addAll(items);
+        mTitleList.add(0, new SiteListItem("Home", mHomePage));
         mDrawerArrayAdapter.notifyDataSetChanged();
     }
 
@@ -337,21 +309,6 @@ public class MainActivity extends AppCompatActivity {
         }
         return content;
     }
-
-    /*
-    protected String getTitle(String strUrl) {
-        Cursor cursor = getPageCursor(strUrl, new String[]{"title"});
-        String content;
-        if (cursor == null) {
-            content = "";
-        } else {
-            cursor.moveToFirst();
-            content = cursor.getString(0);
-            cursor.close();
-        }
-        return content;
-    }
-    */
 
     public Cursor getPageCursor(String url, String[] item) throws IllegalStateException {
         return accessDB(url, PageDBHelper.DB_PAGE_TABLE, item);
@@ -374,49 +331,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    /*
-    protected Cursor getPageCursor(String strUrl) {
-        Cursor cursor = mDB.query(PageDBHelper.DB_PAGE_TABLE, null,
-                "url=?", new String[]{strUrl}, null, null, "1");
-        if (cursor.getCount() == 0) {
-            return null;
-        } else {
-            cursor.moveToFirst();
-            return cursor;
-        }
-    }
-
-    protected Cursor getPageCursor(int id) {
-        Cursor cursor = mDB.query(PageDBHelper.DB_PAGE_TABLE, null,
-                "id=?", new String[]{String.valueOf(id)}, null, null, "1");
-        if (cursor.getCount() == 0) {
-            return null;
-        } else {
-            cursor.moveToFirst();
-            return cursor;
-        }
-    }
-    
-
-    protected ArrayList<String> getMainPageUrls() {
-        ArrayList<String> mainPages = new ArrayList<String>();
-        Cursor cursor = mDB.query(PageDBHelper.DB_PAGE_TABLE, new String[]{"url"}, "is_main=true", null, null, null, "1");
-        while (cursor.moveToNext()) {
-            mainPages.add(new String(cursor.getString(0)));
-        }
-        return mainPages;
-    }
-
-    protected ArrayList<String> getMainPageTitles() {
-        ArrayList<String> mainPages = new ArrayList<String>();
-        Cursor cursor = mDB.query(PageDBHelper.DB_PAGE_TABLE, new String[]{"title"}, "is_main=?", new String[]{"1"}, null, null, null, null);
-        while (cursor.moveToNext()) {
-            mainPages.add(new String(cursor.getString(0)));
-        }
-        return mainPages;
-    }
-    */
-
     protected ArrayList<SiteListItem> getMainPages() {
         ArrayList<SiteListItem> mainPages = new ArrayList<SiteListItem>();
         Cursor cursor = mDB.query(PageDBHelper.DB_PAGE_TABLE, new String[]{"title", "url"}, "is_main=?", new String[]{"1"}, null, null, null, null);
@@ -426,6 +340,49 @@ public class MainActivity extends AppCompatActivity {
         return mainPages;
     }
 
+
+    // Create callback for Navigation Drawer
+    protected ActionBarDrawerToggle actionBarDrawerToggleFactory(
+            DrawerLayout layout, Toolbar toolbar) {
+        return new ActionBarDrawerToggle(
+                MainActivity.this, layout, toolbar,
+                R.string.drawer_open, R.string.drawer_close) {
+            public void onDrawerClosed(View view) {
+                super.onDrawerClosed(view);
+                invalidateOptionsMenu(); // creates call to onPrepareOptionsMenu()
+            }
+
+            public void onDrawerOpened(View drawerView) {
+                super.onDrawerOpened(drawerView);
+                invalidateOptionsMenu(); // creates call to onPrepareOptionsMenu()
+            }
+
+        };
+    }
+
+
+    // Carries out loading main pages of localized websites
+    private final AsyncTask<String, Void, ArrayList<SiteListItem>> siteListCreator
+            = new AsyncTask<String, Void, ArrayList<SiteListItem>>() {
+        @Override
+        protected ArrayList<SiteListItem> doInBackground(String... params) {
+            return getMainPages();
+        }
+
+        @Override
+        protected void onPostExecute(ArrayList<SiteListItem> items) {
+            modifyMenu(items);
+
+        }
+    };
+
+
+    // For detection of motion on RecyclerView
+    private GestureDetector.SimpleOnGestureListener mSimpleOnGestureListener =
+            new GestureDetector.SimpleOnGestureListener(){
+        @Override
+        public boolean onSingleTapUp(MotionEvent e) { return true; }
+    };
 
 
     // For configuring behavior of WebView, create WebViewClient
@@ -483,7 +440,7 @@ public class MainActivity extends AppCompatActivity {
                 return new WebResourceResponse(getMimeType(url),
                         "UTF-8", new ByteArrayInputStream(data));
             } catch (Exception e) {
-                Log.e("WebViewClient", e.toString());
+                //Log.e("WebViewClient", e.toString());
             }
             return null;
         }

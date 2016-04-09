@@ -84,7 +84,7 @@ public class Page {
                     }
                 }
             } catch (MalformedURLException e) {
-                Log.e("findLinks", matchedLink + " - " + e.toString());
+                // Log.e("findLinks", matchedLink + " - " + e.toString());
             } catch (Exception e) {
                 throw e;
             }
@@ -134,7 +134,7 @@ public class Page {
         try {
             return cmpPage.getPageUrl().equals(this.pageUrl);
         } catch (NullPointerException e) {
-            Log.e("equals", e.toString());
+            // Log.e("equals", e.toString());
             return false;
         }
     }
@@ -148,7 +148,7 @@ public class Page {
                 return false;
             }
         } catch (Exception e) {
-            Log.e("domainEqual", e.toString());
+            // Log.e("domainEqual", e.toString());
             return false;
         }
     }

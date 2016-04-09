@@ -83,16 +83,12 @@ public class CrawlService extends IntentService {
 
         try {
             mPageDBTM.initializeTransaction(PageDBHelper.PAGE_TRANSACTION_SQL);
-        } catch (Exception e) {
-            Log.e("crawlPages", e.toString());
-            return;
-        }
-        try {
             mImageDBTM.initializeTransaction(PageDBHelper.IMAGE_TRANSACTION_SQL);
         } catch (Exception e) {
             Log.e("crawlPages", e.toString());
             return;
         }
+
         mVisitedLinks = new ArrayList<URL>();
         try {
             mStartPage = new Page(new URL(startUrl));
@@ -174,20 +170,20 @@ public class CrawlService extends IntentService {
         public void run() {
             Page page = new Page(mUrl);
             // Crawled too many or already visited
-            if (mVisitedLinks.size() > CRAWLED_AMOUNT_LIMIT || mVisitedLinks.contains(page.getPageUrl())) {
+            if (mVisitedLinks.size() > CRAWLED_AMOUNT_LIMIT ||
+                    mVisitedLinks.contains(page.getPageUrl())) {
                 return;
             }
-            Log.e("visitedLinks", String.valueOf(mVisitedLinks.size()));
+            // Log.e("visitedLinks", String.valueOf(mVisitedLinks.size()));
             mVisitedLinks.add(mUrl);
 
             // Get file via network and save it
             if (Page.isImageURL(mUrl.toString())) {
-                // If url designates a image
                 byte[] image_data = httpGetImage(mUrl);
                 try {
                     mImageDBTM.addRecord(new PageDBHelper.ImageRecord(mUrl.toString(),
                             mStartPage.extractDirectory(), image_data));
-                } catch (Exception e) { Log.e("Crawler", e.toString()); }
+                } catch (Exception e) { /* Log.e("Crawler", e.toString()); */ }
             } else {
                 // If url designates a normal page
                 page.setContentText(httpGetRawText(mUrl));
@@ -198,7 +194,7 @@ public class CrawlService extends IntentService {
                     mPageDBTM.addRecord(new PageDBHelper.PageRecord(page.extractTitle(),
                             page.getPageUrl().toString(), mStartPage.extractDirectory(),
                             page.equals(mStartPage), page.getContentText()));
-                } catch (Exception e) { Log.e("Crawler", e.toString()); }
+                } catch (Exception e) { /* Log.e("Crawler", e.toString()); */ }
             }
 
             // Notify status
@@ -269,7 +265,7 @@ public class CrawlService extends IntentService {
             }
             buffer.flush();
         } catch (Exception e) {
-            Log.e("httpGetImage", e.toString());
+            // Log.e("httpGetImage", e.toString());
             return null;
         } finally {
             if (con != null) {
@@ -285,7 +281,7 @@ public class CrawlService extends IntentService {
             con = getConnectionFactory(url);
             return inputStream2String(con.getInputStream());
         } catch (Exception e) {
-            Log.e("httpGetRawText", e.toString());
+            // Log.e("httpGetRawText", e.toString());
             return "";
         } finally {
             if (con != null) {
@@ -312,11 +308,11 @@ public class CrawlService extends IntentService {
             String str;
             while ((str = br.readLine()) != null) { stringBuilder.append(str); }
         } catch (Exception e) {
-            Log.e("inputStream2String", e.toString());
+            // Log.e("inputStream2String", e.toString());
         } finally {
             try {
                 if (br != null) { br.close(); }
-            } catch (Exception e) { Log.e("inputStream2String", e.toString()); }
+            } catch (Exception e) { /* Log.e("inputStream2String", e.toString()); */ }
         }
         return stringBuilder.toString();
     }
