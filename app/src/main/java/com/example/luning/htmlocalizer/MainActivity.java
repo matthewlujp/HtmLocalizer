@@ -1,11 +1,7 @@
 package com.example.luning.htmlocalizer;
 
 import android.app.Notification;
-import android.app.PendingIntent;
-import android.content.ComponentName;
-import android.content.Context;
 import android.content.Intent;
-import android.content.ServiceConnection;
 import android.content.res.Configuration;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
@@ -13,8 +9,6 @@ import android.graphics.Bitmap;
 import android.os.AsyncTask;
 import android.os.Handler;
 import android.support.annotation.Nullable;
-import android.support.design.widget.AppBarLayout;
-import android.support.design.widget.NavigationView;
 import android.support.v4.widget.DrawerLayout;
 import android.support.v7.app.ActionBarDrawerToggle;
 import android.support.v7.app.AppCompatActivity;
@@ -34,15 +28,13 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.widget.AdapterView;
-import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.ListView;
-import android.widget.Spinner;
 import android.widget.Toast;
 
 import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -52,7 +44,7 @@ public class MainActivity extends AppCompatActivity {
     private final String homePage = "https://www.google.co.jp/";
     private ImageButton backBtn, forwardBtn, crawlBtn, goBtn;
     private EditText urlBox;
-    private ArrayList<StringAndMeta> mTitleList;
+    private ArrayList<SiteListItem> mTitleList;
     private DrawerListAdapter mDrawerArrayAdapter;
     private WebView mWebView;
     private SQLiteDatabase mDB;
@@ -61,42 +53,92 @@ public class MainActivity extends AppCompatActivity {
     private RecyclerView mRecyclerView;
     private ActionBarDrawerToggle mDrawerToggle;
     private LinearLayoutManager mLayoutManager;
-    private ListView mDrawerList;
     private Toolbar mToolbar;
 
 
-    public static class StringAndMeta {
-        private String mTitle, mMeta;
-        private Bitmap mIcon;
+    protected ActionBarDrawerToggle actionBarDrawerToggleFactory(
+            DrawerLayout layout, Toolbar toolbar) {
+        return new ActionBarDrawerToggle(MainActivity.this, layout, toolbar,
+                R.string.drawer_open, R.string.drawer_close) {
+            public void onDrawerClosed(View view) {
+                super.onDrawerClosed(view);
+                invalidateOptionsMenu(); // creates call to onPrepareOptionsMenu()
+            }
 
-        public StringAndMeta(String title, String meta) {
-            mTitle = title;
-            mMeta = meta;
+            public void onDrawerOpened(View drawerView) {
+                super.onDrawerOpened(drawerView);
+                invalidateOptionsMenu(); // creates call to onPrepareOptionsMenu()
+            }
+        };
+    }
 
-        }
-
-        public String getTitle() {
-            return mTitle;
-        }
-
-        public void setTitle(String title) {
-            this.mTitle = mTitle;
-        }
-
-        public String getMeta() {
-            return mMeta;
-        }
-
-        public void setMeta(String meta) {
-            this.mMeta = mMeta;
+    private final AsyncTask<String, Void, ArrayList<SiteListItem>> siteListCreator
+            = new AsyncTask<String, Void, ArrayList<SiteListItem>>() {
+        @Override
+        protected ArrayList<SiteListItem> doInBackground(String... params) {
+            return getMainPages();
         }
 
         @Override
-        public String toString() {
-            return mTitle;
+        protected void onPostExecute(ArrayList<SiteListItem> titles) {
+            mTitleList = new ArrayList<SiteListItem>(titles);
+            mTitleList.add(0, new SiteListItem("Home", homePage));
+            //mTitleList.add(0, new SiteListItem("", ""));
+            mDrawerArrayAdapter = new DrawerListAdapter(mTitleList);
+            mRecyclerView.setAdapter(mDrawerArrayAdapter);
+            mLayoutManager = new LinearLayoutManager(MainActivity.this);
+            mRecyclerView.setLayoutManager(mLayoutManager);
+
+            final GestureDetector singleTapDetector = new GestureDetector(
+                    MainActivity.this, new GestureDetector.SimpleOnGestureListener(){
+                @Override
+                public boolean onSingleTapUp(MotionEvent e) { return true; }
+            });
+
+            mRecyclerView.addOnItemTouchListener(new RecyclerView.OnItemTouchListener() {
+                @Override
+                public boolean onInterceptTouchEvent(RecyclerView rv, MotionEvent e) {
+                    View child = mRecyclerView.findChildViewUnder(e.getX(), e.getY());
+                    if (child != null && singleTapDetector.onTouchEvent(e)) {
+                        int position = mRecyclerView.getChildLayoutPosition(child);
+                        if (position == 0) {
+                            mWebView.loadUrl(mDrawerArrayAdapter.getItem(position).getURL());
+                        } else {
+                            SiteListItem pm = mDrawerArrayAdapter.getItem(position);
+                            String strHtml = getContent(pm.getURL());
+                            mWebView.loadDataWithBaseURL(pm.getURL(), strHtml, "text/html", "UTF-8", "");
+                        }
+                        mDrawerLayout.closeDrawers();
+                        return true;
+                    }
+                    return false;
+                }
+
+                @Override
+                public void onTouchEvent(RecyclerView rv, MotionEvent e) {
+
+                }
+
+                @Override
+                public void onRequestDisallowInterceptTouchEvent(boolean disallowIntercept) {
+
+                }
+            });
+
+
+            mDrawerToggle.syncState();
+
 
         }
+    };
+
+    protected void configureWebView(WebView webView) {
+        WebSettings settings = mWebView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setSaveFormData(false);
+        settings.setSupportZoom(true);
     }
+
 
 
     @Override
@@ -109,195 +151,20 @@ public class MainActivity extends AppCompatActivity {
         mDB = dbHelper.getWritableDatabase();
 
         mToolbar = (Toolbar)findViewById(R.id.actionbar);
-        mDrawerLayout = (DrawerLayout)findViewById(R.id.drawer_layout);
-        mRecyclerView = (RecyclerView)findViewById(R.id.drawer_list);
-        mDrawerToggle = new ActionBarDrawerToggle(
-                MainActivity.this,
-                mDrawerLayout,
-                mToolbar,
-                R.string.drawer_open,
-                R.string.drawer_close) {
-
-            /** Called when a drawer has settled in a completely closed state. */
-            public void onDrawerClosed(View view) {
-                super.onDrawerClosed(view);
-                invalidateOptionsMenu(); // creates call to onPrepareOptionsMenu()
-            }
-
-            /** Called when a drawer has settled in a completely open state. */
-            public void onDrawerOpened(View drawerView) {
-                super.onDrawerOpened(drawerView);
-                invalidateOptionsMenu(); // creates call to onPrepareOptionsMenu()
-            }
-        };
-
-        final GestureDetector singleTapDetector = new GestureDetector(
-                MainActivity.this, new GestureDetector.SimpleOnGestureListener(){
-            @Override
-            public boolean onSingleTapUp(MotionEvent e) { return true; }
-        });
-
-        // Set Drawer Listener
-        mDrawerLayout.addDrawerListener(mDrawerToggle);
-
         setSupportActionBar(mToolbar);
         getSupportActionBar().setDisplayShowHomeEnabled(true);
+        mDrawerLayout = (DrawerLayout)findViewById(R.id.drawer_layout);
+        mRecyclerView = (RecyclerView)findViewById(R.id.drawer_list);
+        mDrawerToggle = actionBarDrawerToggleFactory(mDrawerLayout, mToolbar);
+        mDrawerLayout.addDrawerListener(mDrawerToggle);
 
-        // Read the list of saved pages
-        new AsyncTask<String, Void, ArrayList<StringAndMeta>>() {
-            @Override
-            protected ArrayList<StringAndMeta> doInBackground(String... params) {
-                return getMainPages();
-            }
-
-            @Override
-            protected void onPostExecute(ArrayList<StringAndMeta> titles) {
-                mTitleList = new ArrayList<StringAndMeta>(titles);
-                mTitleList.add(0, new StringAndMeta("Home", homePage));
-                //mTitleList.add(0, new StringAndMeta("", ""));
-                mDrawerArrayAdapter = new DrawerListAdapter(mTitleList);
-                mRecyclerView.setAdapter(mDrawerArrayAdapter);
-                mLayoutManager = new LinearLayoutManager(MainActivity.this);
-                mRecyclerView.setLayoutManager(mLayoutManager);
-
-                mRecyclerView.addOnItemTouchListener(new RecyclerView.OnItemTouchListener() {
-                    @Override
-                    public boolean onInterceptTouchEvent(RecyclerView rv, MotionEvent e) {
-                        View child = mRecyclerView.findChildViewUnder(e.getX(), e.getY());
-                        if (child != null && singleTapDetector.onTouchEvent(e)) {
-                            int position = mRecyclerView.getChildLayoutPosition(child);
-                            if (position == 0) {
-                                mWebView.loadUrl(mDrawerArrayAdapter.getItem(position).getMeta());
-                            } else {
-                                StringAndMeta pm = mDrawerArrayAdapter.getItem(position);
-                                String strHtml = getContent(pm.getMeta());
-                                mWebView.loadDataWithBaseURL(pm.getMeta(), strHtml, "text/html", "UTF-8", "");
-                            }
-                            mDrawerLayout.closeDrawers();
-                            return true;
-                        }
-                        return false;
-                    }
-
-                    @Override
-                    public void onTouchEvent(RecyclerView rv, MotionEvent e) {
-
-                    }
-
-                    @Override
-                    public void onRequestDisallowInterceptTouchEvent(boolean disallowIntercept) {
-
-                    }
-                });
-
-
-                mDrawerToggle.syncState();
-
-
-            }
-        }.execute(FILE_LIST);
-
-
+        siteListCreator.execute(FILE_LIST);
 
         // Create web view
         mWebView = (WebView)findViewById(R.id.webView);
-        WebSettings settings = mWebView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setSaveFormData(false);
-        settings.setSupportZoom(true);
+        configureWebView(mWebView);
 
-        mWebView.setWebViewClient(new WebViewClient() {
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                String pageContent = getContent(url);
-                if (pageContent.equals("")) {
-                    return false;
-                } else {
-                    mWebView.loadDataWithBaseURL(url, pageContent, "text/html", "UTF-8", null);
-                    return true;
-                }
-            }
-
-            @Override
-            public void onPageStarted(WebView view, String url, Bitmap favicon) {
-                // Set accurate url on load complete
-                urlBox.setText(url);
-                // Disable back button if unable to go back
-                backBtn.setEnabled(view.canGoBack());
-                // Disable forward button if unable to go forward
-                forwardBtn.setEnabled(view.canGoForward());
-            }
-
-            @Override
-            public void onPageFinished(WebView view, String url) {
-            }
-
-            @Override
-            @Nullable
-            public WebResourceResponse shouldInterceptRequest(WebView view,
-                                                              WebResourceRequest request) {
-                String extension = MimeTypeMap.getFileExtensionFromUrl(request.getUrl().toString());
-                if (extension.equals("css") || extension.equals("js")) {
-                    return loadTextAssetsFromDB(request.getUrl().toString());
-                } else if (extension.equals("jpeg") || extension.equals("jpg") ||
-                        extension.equals("JPG") || extension.equals("png")) {
-                    return loadImageAssetsFromDB(request.getUrl().toString());
-                }
-                return null;
-            }
-
-            @Nullable
-            public WebResourceResponse loadTextAssetsFromDB(String url) {
-                Cursor assetFileInfo = getPageCursor(url, new String[]{"content"});
-                if (assetFileInfo != null && assetFileInfo.getCount() > 0) {
-                    assetFileInfo.moveToFirst();
-                    String assetText = assetFileInfo.getString(0);
-                    assetFileInfo.close();
-                    try {
-                        return new WebResourceResponse(getMimeType(url),
-                                "UTF-8", new ByteArrayInputStream(assetText.getBytes("UTF-8")));
-                    } catch (Exception e) {
-                        Log.e("WebViewClient", e.toString());
-                    }
-                }
-                return null;
-            }
-
-            @Nullable
-            public WebResourceResponse loadImageAssetsFromDB(String url) {
-                Cursor assetFileInfo = getImageCursor(url, new String[]{"image"});
-                if (assetFileInfo != null && assetFileInfo.getCount() > 0) {
-                    assetFileInfo.moveToFirst();
-                    byte[] imageData = assetFileInfo.getBlob(0);
-                    assetFileInfo.close();
-                    try {
-                        return new WebResourceResponse(getMimeType(url),
-                                "utf-8", new ByteArrayInputStream(imageData));
-                    } catch (Exception e) {
-                        Log.e("loadImageAssets", e.toString());
-                    }
-                }
-                return null;
-            }
-
-            public String getMimeType(String url) {
-                String type = null;
-                String extension = MimeTypeMap.getFileExtensionFromUrl(url);
-                if (extension != null) {
-                    if (extension.equals("js")) {
-                        return "text/javascript";
-                    } else if (extension.equals("jpg") || extension.equals("jpeg") || extension.equals("JPG")) {
-                        return "image/*";
-                    } else if (extension.equals("png")) {
-                        return "image/*";
-                    } else if (extension.equals("svg")) {
-                        return "image/svg+xml";
-                    }
-                    type = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
-                }
-                return type;
-            }
-        });
+        mWebView.setWebViewClient(mWebViewClient);
         mWebView.loadUrl(homePage);
 
         goBtn = (ImageButton)findViewById(R.id.goBtn);
@@ -454,7 +321,7 @@ public class MainActivity extends AppCompatActivity {
     protected void modifyMenu() {
         mTitleList.clear();
         mTitleList.addAll(getMainPages());
-        mTitleList.add(0, new StringAndMeta("Home", homePage));
+        mTitleList.add(0, new SiteListItem("Home", homePage));
         mDrawerArrayAdapter.notifyDataSetChanged();
     }
 
@@ -471,6 +338,7 @@ public class MainActivity extends AppCompatActivity {
         return content;
     }
 
+    /*
     protected String getTitle(String strUrl) {
         Cursor cursor = getPageCursor(strUrl, new String[]{"title"});
         String content;
@@ -483,9 +351,20 @@ public class MainActivity extends AppCompatActivity {
         }
         return content;
     }
+    */
 
-    protected Cursor getPageCursor(String url, String[] item) {
-        Cursor cursor = mDB.query(PageDBHelper.DB_PAGE_TABLE, item,
+    public Cursor getPageCursor(String url, String[] item) throws IllegalStateException {
+        return accessDB(url, PageDBHelper.DB_PAGE_TABLE, item);
+    }
+
+    public Cursor getImageCursor(String url, String[] item) throws IllegalStateException {
+        return accessDB(url, PageDBHelper.DB_IMAGE_TABLE, item);
+    }
+
+    public Cursor accessDB(String url, String tableName, String[] item)
+            throws IllegalStateException {
+        if (mDB == null) throw new IllegalStateException("DB hasn't setup properly, yet!");
+        Cursor cursor = mDB.query(tableName, item,
                 "url=?", new String[]{url}, null, null, "1");
         if (cursor.getCount() == 0) {
             return null;
@@ -495,17 +374,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    protected Cursor getImageCursor(String url, String[] item) {
-        Cursor cursor = mDB.query(PageDBHelper.DB_IMAGE_TABLE, item,
-                "url=?", new String[]{url}, null, null, "1");
-        if (cursor.getCount() == 0) {
-            return null;
-        } else {
-            cursor.moveToFirst();
-            return cursor;
-        }
-    }
-
+    /*
     protected Cursor getPageCursor(String strUrl) {
         Cursor cursor = mDB.query(PageDBHelper.DB_PAGE_TABLE, null,
                 "url=?", new String[]{strUrl}, null, null, "1");
@@ -527,6 +396,7 @@ public class MainActivity extends AppCompatActivity {
             return cursor;
         }
     }
+    
 
     protected ArrayList<String> getMainPageUrls() {
         ArrayList<String> mainPages = new ArrayList<String>();
@@ -545,23 +415,96 @@ public class MainActivity extends AppCompatActivity {
         }
         return mainPages;
     }
+    */
 
-    protected ArrayList<StringAndMeta> getMainPages() {
-        ArrayList<StringAndMeta> mainPages = new ArrayList<StringAndMeta>();
+    protected ArrayList<SiteListItem> getMainPages() {
+        ArrayList<SiteListItem> mainPages = new ArrayList<SiteListItem>();
         Cursor cursor = mDB.query(PageDBHelper.DB_PAGE_TABLE, new String[]{"title", "url"}, "is_main=?", new String[]{"1"}, null, null, null, null);
         while (cursor.moveToNext()) {
-            mainPages.add(new StringAndMeta(cursor.getString(0), cursor.getString(1)));
+            mainPages.add(new SiteListItem(cursor.getString(0), cursor.getString(1)));
         }
         return mainPages;
     }
 
 
 
+    // For configuring behavior of WebView, create WebViewClient
+    private WebViewClient mWebViewClient = new WebViewClient() {
+        @Override
+        public boolean shouldOverrideUrlLoading(WebView view, String url) {
+            String pageContent = getContent(url);
+            if (mWebView == null || pageContent.equals("")) {
+                return false;
+            } else {
+                mWebView.loadDataWithBaseURL(url, pageContent, "text/html", "UTF-8", null);
+                return true;
+            }
+        }
 
+        @Override
+        public void onPageStarted(WebView view, String url, Bitmap favicon) {
+            urlBox.setText(url);
+            backBtn.setEnabled(view.canGoBack());
+            forwardBtn.setEnabled(view.canGoForward());
+        }
 
+        @Override
+        @Nullable
+        public WebResourceResponse shouldInterceptRequest(WebView view,
+                                                          WebResourceRequest request) {
+            String extension = MimeTypeMap.getFileExtensionFromUrl(request.getUrl().toString());
+            Cursor cursor = null;
+            WebResourceResponse response = null;
+            try {
+                String url = request.getUrl().toString();
+                byte[] byteData = null;
+                if (extension.equals("css") || extension.equals("js")) {
+                    cursor = getPageCursor(url, new String[]{"content"});
+                    byteData = cursor.getString(0).getBytes("UTF-8");
+                } else if (extension.equals("jpeg") || extension.equals("jpg") ||
+                        extension.equals("JPG") || extension.equals("png")) {
+                    cursor = getImageCursor(url, new String[]{"image"});
+                    byteData = cursor.getBlob(0);
+                }
+                response = byteArray2WebResponse(url, byteData);
+            } catch (Exception e) {
+                //Log.e("shouldIntercept", e.toString());
+            } finally {
+                if (cursor != null) {
+                    cursor.close();
+                }
+            }
+            return response;
+        }
 
+        @Nullable
+        protected WebResourceResponse byteArray2WebResponse(String url, byte[] data) {
+            try {
+                return new WebResourceResponse(getMimeType(url),
+                        "UTF-8", new ByteArrayInputStream(data));
+            } catch (Exception e) {
+                Log.e("WebViewClient", e.toString());
+            }
+            return null;
+        }
 
-
-
+        public String getMimeType(String url) {
+            String type = null;
+            String extension = MimeTypeMap.getFileExtensionFromUrl(url);
+            if (extension != null) {
+                if (extension.equals("js")) {
+                    return "text/javascript";
+                } else if (extension.equals("jpg") || extension.equals("jpeg") || extension.equals("JPG")) {
+                    return "image/*";
+                } else if (extension.equals("png")) {
+                    return "image/*";
+                } else if (extension.equals("svg")) {
+                    return "image/svg+xml";
+                }
+                type = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
+            }
+            return type;
+        }
+    };
 
 }

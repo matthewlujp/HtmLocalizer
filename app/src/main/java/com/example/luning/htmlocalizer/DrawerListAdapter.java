@@ -26,9 +26,9 @@ public class DrawerListAdapter extends RecyclerView.Adapter<DrawerListAdapter.It
         }
     }
 
-    private ArrayList<MainActivity.StringAndMeta> mItems;
+    private ArrayList<SiteListItem> mItems;
 
-    public DrawerListAdapter(ArrayList<MainActivity.StringAndMeta> items) {
+    public DrawerListAdapter(ArrayList<SiteListItem> items) {
         mItems = items;
     }
 
@@ -50,7 +50,7 @@ public class DrawerListAdapter extends RecyclerView.Adapter<DrawerListAdapter.It
         return mItems.size();
     }
 
-    public MainActivity.StringAndMeta getItem(int position) {
+    public SiteListItem getItem(int position) {
         return mItems.get(position);
     }
 }
