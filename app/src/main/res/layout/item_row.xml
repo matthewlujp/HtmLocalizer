@@ -16,7 +16,8 @@
         android:paddingTop="8dp"
         android:paddingBottom="8dp"
         android:paddingLeft="8dp"
-        android:orientation="horizontal">
+        android:orientation="horizontal"
+        android:background="@drawable/drawer_item_backgroud" >
 
         <ImageView
             android:layout_width="wrap_content"

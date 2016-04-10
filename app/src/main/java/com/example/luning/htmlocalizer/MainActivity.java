@@ -1,5 +1,8 @@
 package com.example.luning.htmlocalizer;
 
+import android.app.AlertDialog;
+import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.database.Cursor;
@@ -7,6 +10,7 @@ import android.database.sqlite.SQLiteDatabase;
 import android.graphics.Bitmap;
 import android.os.AsyncTask;
 import android.os.Handler;
+import android.os.Vibrator;
 import android.support.annotation.Nullable;
 import android.support.v4.widget.DrawerLayout;
 import android.support.v7.app.ActionBarDrawerToggle;
@@ -33,13 +37,13 @@ import android.widget.Toast;
 
 import java.io.ByteArrayInputStream;
 import java.util.ArrayList;
+import java.util.NoSuchElementException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class MainActivity extends AppCompatActivity
         implements View.OnKeyListener, View.OnFocusChangeListener,
         CrawlResultReceiver.Receiver, View.OnClickListener, RecyclerView.OnItemTouchListener {
-    public final static String FILE_LIST = "SAVED_FILE_LIST";
     private static final int TAG_GO_BUTTON = 0;
     private static final int TAG_CRAWL_BUTTON = 1;
     private static final int TAG_BACK_BUTTON = 2;
@@ -48,16 +52,17 @@ public class MainActivity extends AppCompatActivity
     private static final String mHomePage = "https://www.google.co.jp/";
     private ImageButton backBtn, forwardBtn, crawlBtn, goBtn, refreshBtn;
     private EditText urlBox;
+    private WebView mWebView;
     private final ArrayList<SiteListItem> mTitleList = new ArrayList<SiteListItem>();
     private DrawerListAdapter mDrawerArrayAdapter;
-    private WebView mWebView;
-    private SQLiteDatabase mDB;
-    private CrawlResultReceiver mCrawlResultReceiver;
     private DrawerLayout mDrawerLayout;
     private RecyclerView mRecyclerView;
     private ActionBarDrawerToggle mDrawerToggle;
     private Toolbar mToolbar;
     private GestureDetector mSingleTapDetector;
+    private CrawlResultReceiver mCrawlResultReceiver;
+    private SQLiteDatabase mDB;
+
 
 
     @Override
@@ -83,7 +88,7 @@ public class MainActivity extends AppCompatActivity
         mRecyclerView.addOnItemTouchListener(this);
         mDrawerToggle.syncState();
 
-        siteListCreator.execute(FILE_LIST);
+        new SiteListCreator().execute();
 
         // Create web view
         mWebView = (WebView)findViewById(R.id.webView);
@@ -220,7 +225,8 @@ public class MainActivity extends AppCompatActivity
             switch (resultData.getInt(CrawlService.CURRENT_STATUS)) {
                 case CrawlService.PAGES_COMPLETED:
                     // Log.e("onResultReceive", "page ok");
-                    modifyMenu();
+                    //modifyMenu();
+                    new SiteListCreator().execute();
                     msg = "Localizing pages completed.";
                     break;
                 case CrawlService.IMAGES_COMPLETED:
@@ -240,17 +246,24 @@ public class MainActivity extends AppCompatActivity
     @Override
     public boolean onInterceptTouchEvent(RecyclerView rv, MotionEvent e) {
         View child = mRecyclerView.findChildViewUnder(e.getX(), e.getY());
-        if (child != null && mSingleTapDetector.onTouchEvent(e)) {
-            int position = mRecyclerView.getChildLayoutPosition(child);
-            if (position == 0) {
-                mWebView.loadUrl(mDrawerArrayAdapter.getItem(position).getURL());
-            } else {
-                SiteListItem pm = mDrawerArrayAdapter.getItem(position);
-                String strHtml = getContent(pm.getURL());
-                mWebView.loadDataWithBaseURL(pm.getURL(), strHtml, "text/html", "UTF-8", "");
+        if (child != null) {
+            if (mSingleTapDetector.onTouchEvent(e)) {
+                int position = mRecyclerView.getChildLayoutPosition(child);
+                if (position == 0) {
+                    mWebView.loadUrl(mDrawerArrayAdapter.getItem(position).getURL());
+                } else {
+                    SiteListItem pm = mDrawerArrayAdapter.getItem(position);
+                    String strHtml = getContent(pm.getURL());
+                    mWebView.loadDataWithBaseURL(pm.getURL(), strHtml, "text/html", "UTF-8", "");
+                }
+                mDrawerLayout.closeDrawers();
+                child.setSelected(false);
+                return true;
+            } else if (e.getAction() == MotionEvent.ACTION_DOWN) {
+                child.setSelected(true);
+            } else if (e.getAction() == MotionEvent.ACTION_UP) {
+                child.setSelected(false);
             }
-            mDrawerLayout.closeDrawers();
-            return true;
         }
         return false;
     }
@@ -297,8 +310,8 @@ public class MainActivity extends AppCompatActivity
         mDrawerArrayAdapter.notifyDataSetChanged();
     }
 
-    protected String getContent(String strUrl) {
-        Cursor cursor = getPageCursor(strUrl, new String[]{"content"});
+    protected String getContent(String url) {
+        Cursor cursor = getPageCursor(url, new String[]{"content"});
         String content;
         if (cursor == null) {
             content = "";
@@ -308,6 +321,23 @@ public class MainActivity extends AppCompatActivity
             cursor.close();
         }
         return content;
+    }
+
+    protected String getDomain(String url) throws NoSuchElementException {
+        Cursor cursor = getPageCursor(url, new String[]{"domain"});
+        if (cursor == null || cursor.getCount() == 0) {
+            throw new NoSuchElementException("Such page not found.");
+        }
+        cursor.moveToFirst();
+        String domain = cursor.getString(0);
+        cursor.close();
+        return domain;
+    }
+
+    protected void removeWebsite(String domain) throws IllegalStateException {
+        if (mDB == null) throw new IllegalStateException("DB hasn't setup properly, yet!");
+        mDB.delete(PageDBHelper.DB_PAGE_TABLE, "domain = ?", new String[]{domain});
+        mDB.delete(PageDBHelper.DB_IMAGE_TABLE, "domain = ?", new String[]{domain});
     }
 
     public Cursor getPageCursor(String url, String[] item) throws IllegalStateException {
@@ -361,11 +391,12 @@ public class MainActivity extends AppCompatActivity
     }
 
 
+
     // Carries out loading main pages of localized websites
-    private final AsyncTask<String, Void, ArrayList<SiteListItem>> siteListCreator
-            = new AsyncTask<String, Void, ArrayList<SiteListItem>>() {
+    private class SiteListCreator extends
+            AsyncTask<Void, Void, ArrayList<SiteListItem>>{
         @Override
-        protected ArrayList<SiteListItem> doInBackground(String... params) {
+        protected ArrayList<SiteListItem> doInBackground(Void... params) {
             return getMainPages();
         }
 
@@ -376,13 +407,79 @@ public class MainActivity extends AppCompatActivity
         }
     };
 
-
     // For detection of motion on RecyclerView
     private GestureDetector.SimpleOnGestureListener mSimpleOnGestureListener =
             new GestureDetector.SimpleOnGestureListener(){
-        @Override
-        public boolean onSingleTapUp(MotionEvent e) { return true; }
+                @Override
+                    public boolean onSingleTapUp(MotionEvent e) {
+                    return true;
+                }
+
+                @Override
+                public void onLongPress(MotionEvent e) {
+                    View child = mRecyclerView.findChildViewUnder(e.getX(), e.getY());
+                    if (child != null) {
+                        ((Vibrator) MainActivity.this.getSystemService(
+                                Context.VIBRATOR_SERVICE)).vibrate(70);
+                        int position = mRecyclerView.getChildLayoutPosition(child);
+                        SiteListItem item = mDrawerArrayAdapter.getItem(position);
+                        final String url = item.getURL();
+                        String title = item.getTitle();
+
+                        showDeleteDialog(title,
+                                new DialogInterface.OnClickListener() {
+                                    @Override
+                                    public void onClick(DialogInterface dialog, int which) {
+                                        try {
+                                            new AsyncWebsiteRemover().execute(url);
+                                        } catch (Exception ex) {
+                                            Log.e("onLongPress", ex.toString());
+                                        }
+                                    }
+                                },
+                                new DialogInterface.OnClickListener() {
+                                    @Override
+                                    public void onClick(DialogInterface dialog, int which) {}
+                                });
+                    }
+                }
     };
+
+
+    // Remove web site from database asynchronously
+    private class AsyncWebsiteRemover extends AsyncTask<String, Void, ArrayList<SiteListItem>> {
+        @Override
+        protected ArrayList<SiteListItem> doInBackground(String... params) {
+            try {
+                String domain = getDomain(params[0]);
+                removeWebsite(domain);
+
+            } catch (Exception e) {
+                Log.e("onLongPress", e.toString());
+            } finally {
+                return getMainPages();
+            }
+        }
+
+        @Override
+        protected void onPostExecute(ArrayList<SiteListItem> result) {
+            modifyMenu(result);
+        }
+    }
+
+
+    // Show delete confirmation dialog
+    protected void showDeleteDialog(String siteTitle,
+                                    DialogInterface.OnClickListener okListener,
+                                    DialogInterface.OnClickListener cancelListener) {
+        new AlertDialog.Builder(MainActivity.this)
+                .setTitle("Delete website")
+                .setMessage("Do you want to delete " + siteTitle + " from this machine?")
+                .setPositiveButton(R.string.yes, okListener)
+                .setNegativeButton(R.string.cancel, cancelListener)
+                .setIcon(R.drawable.htmlocalizer_icon_middle)
+                .show();
+    }
 
 
     // For configuring behavior of WebView, create WebViewClient

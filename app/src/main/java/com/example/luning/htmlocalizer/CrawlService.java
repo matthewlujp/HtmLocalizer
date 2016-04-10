@@ -70,7 +70,7 @@ public class CrawlService extends IntentService {
         mReceiver = intent.getParcelableExtra("receiver");
         mServiceId = 100;
         Notification.Builder builder = notificationBuilderFactory("HtmLocalizer - " + startUrl,
-                "Initiate localizing...", R.mipmap.ic_launcher);
+                "Initiate localizing...", R.drawable.htmlocalizer_icon_small);
         showNotification(mServiceId, builder);
 
         crawlPages(startUrl);
@@ -117,7 +117,7 @@ public class CrawlService extends IntentService {
 
 
         Notification.Builder nftBuilder = notificationBuilderFactory("HtmLocalizer - " +
-                mStartPageTitle, "Crawling completed. Saving...", R.mipmap.ic_launcher);
+                mStartPageTitle, "Crawling completed. Saving...", R.drawable.htmlocalizer_icon_small);
         nftBuilder.setProgress(0, 0, true);
         showNotification(mServiceId, nftBuilder);
 
@@ -129,7 +129,7 @@ public class CrawlService extends IntentService {
         }
 
         nftBuilder = notificationBuilderFactory("HtmLocalizer - " + mStartPageTitle,
-                "Pages saved. Saving images...", R.mipmap.ic_launcher);
+                "Pages saved. Saving images...", R.drawable.htmlocalizer_icon_small);
         nftBuilder.setProgress(0, 0, true);
         showNotification(mServiceId, nftBuilder);
 
@@ -141,7 +141,7 @@ public class CrawlService extends IntentService {
         }
 
         nftBuilder = notificationBuilderFactory("HtmLocalizer - " + mStartPageTitle,
-                "Localizing completed.", R.mipmap.ic_launcher);
+                "Localizing completed.", R.drawable.htmlocalizer_icon_small);
         showNotification(mServiceId, nftBuilder);
 
         // Notify MainActivity page localization completion
@@ -202,7 +202,7 @@ public class CrawlService extends IntentService {
             if (crawledAmount % 10 == 0) {
                 CharSequence ntfMsg = "Crawled " + crawledAmount + " pages.";
                 Notification.Builder nftBuilder = notificationBuilderFactory(
-                        "HtmLocalizer - " + mStartPageTitle, ntfMsg, R.mipmap.ic_launcher);
+                        "HtmLocalizer - " + mStartPageTitle, ntfMsg, R.drawable.htmlocalizer_icon_small);
                 nftBuilder.setProgress(0, 0, true);
                 showNotification(mServiceId, nftBuilder);
             }
