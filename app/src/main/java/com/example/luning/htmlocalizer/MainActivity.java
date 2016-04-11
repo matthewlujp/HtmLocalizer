@@ -242,6 +242,9 @@ public class MainActivity extends AppCompatActivity
         }
     }
 
+
+    private View mPrevTouchedItem = null;
+
     // RecyclerView.OnItemTouchListener
     @Override
     public boolean onInterceptTouchEvent(RecyclerView rv, MotionEvent e) {
@@ -261,8 +264,16 @@ public class MainActivity extends AppCompatActivity
                 return true;
             } else if (e.getAction() == MotionEvent.ACTION_DOWN) {
                 child.setSelected(true);
+                mPrevTouchedItem = child;
             } else if (e.getAction() == MotionEvent.ACTION_UP) {
                 child.setSelected(false);
+                mPrevTouchedItem = null;
+            } else if (e.getAction() == MotionEvent.ACTION_MOVE) {
+                if (!child.equals(mPrevTouchedItem)) {
+                    mPrevTouchedItem.setSelected(false);
+                    child.setSelected(true);
+                    mPrevTouchedItem = child;
+                }
             }
         }
         return false;
@@ -406,6 +417,7 @@ public class MainActivity extends AppCompatActivity
 
         }
     };
+
 
     // For detection of motion on RecyclerView
     private GestureDetector.SimpleOnGestureListener mSimpleOnGestureListener =
