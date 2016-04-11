@@ -12,6 +12,7 @@ import android.os.AsyncTask;
 import android.os.Handler;
 import android.os.Vibrator;
 import android.support.annotation.Nullable;
+import android.support.v4.content.ContextCompat;
 import android.support.v4.widget.DrawerLayout;
 import android.support.v7.app.ActionBarDrawerToggle;
 import android.support.v7.app.AppCompatActivity;
@@ -76,6 +77,7 @@ public class MainActivity extends AppCompatActivity
 
         mSingleTapDetector = new GestureDetector(this, mSimpleOnGestureListener);
         mToolbar = (Toolbar)findViewById(R.id.actionbar);
+        mToolbar.setTitleTextColor(ContextCompat.getColor(MainActivity.this, R.color.titleColor));
         setSupportActionBar(mToolbar);
         getSupportActionBar().setDisplayShowHomeEnabled(true);
         mDrawerLayout = (DrawerLayout)findViewById(R.id.drawer_layout);
