@@ -9,7 +9,6 @@ import android.content.Intent;
 import android.database.sqlite.SQLiteDatabase;
 import android.os.Bundle;
 import android.os.ResultReceiver;
-import android.util.Log;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
@@ -85,7 +84,7 @@ public class CrawlService extends IntentService {
             mPageDBTM.initializeTransaction(PageDBHelper.PAGE_TRANSACTION_SQL);
             mImageDBTM.initializeTransaction(PageDBHelper.IMAGE_TRANSACTION_SQL);
         } catch (Exception e) {
-            Log.e("crawlPages", e.toString());
+            Logger.e("crawlPages", e.toString());
             return;
         }
 
@@ -93,17 +92,17 @@ public class CrawlService extends IntentService {
         try {
             mStartPage = new Page(new URL(startUrl));
         } catch (MalformedURLException e) {
-            Log.e("crawlPage", e.toString());
+            Logger.e("crawlPage", e.toString());
             return;
         } catch (Exception e) {
-            Log.e("crawlPage", e.toString());
+            Logger.e("crawlPage", e.toString());
             return;
         }
 
         try {
             mCrawlExecutor.execute(new Crawler(mStartPage.getPageUrl()));
         } catch (Exception e) {
-            Log.e("crawlPages", e.toString());
+            Logger.e("crawlPages", e.toString());
         }
 
         // Wait till crawling process ends
@@ -112,7 +111,7 @@ public class CrawlService extends IntentService {
                 synchronized (this) {
                     wait(4000);
                 }
-            } catch (Exception e) { Log.e("crawlPages", e.toString()); }
+            } catch (Exception e) { Logger.e("crawlPages", e.toString()); }
         } while (mCrawlExecutor.getQueue().size() > 0);
 
 
@@ -125,7 +124,7 @@ public class CrawlService extends IntentService {
         try {
             mPageDBTM.commitTransaction(false);
         } catch (Exception e) {
-            Log.e("crawlPages", e.toString());
+            Logger.e("crawlPages", e.toString());
         }
 
         nftBuilder = notificationBuilderFactory("HtmLocalizer - " + mStartPageTitle,
@@ -137,7 +136,7 @@ public class CrawlService extends IntentService {
         try {
             mImageDBTM.commitTransaction(false);
         } catch (Exception e) {
-            Log.e("crawlPages", e.toString());
+            Logger.e("crawlPages", e.toString());
         }
 
         nftBuilder = notificationBuilderFactory("HtmLocalizer - " + mStartPageTitle,
@@ -145,13 +144,13 @@ public class CrawlService extends IntentService {
         showNotification(mServiceId, nftBuilder);
 
         // Notify MainActivity page localization completion
-        Log.e("sendResult", "page");
+        Logger.e("sendResult", "page");
         Bundle pageInfoBundle = new Bundle();
         pageInfoBundle.putInt(CURRENT_STATUS, PAGES_COMPLETED);
         mReceiver.send(Activity.RESULT_OK, pageInfoBundle);
 
         // Notify MainActivity image localization completion
-        Log.e("sendResult", "image");
+        Logger.e("sendResult", "image");
         Bundle imageInfoBundle = new Bundle();
         imageInfoBundle.putInt(CURRENT_STATUS, IMAGES_COMPLETED);
         mReceiver.send(Activity.RESULT_OK, imageInfoBundle);
@@ -214,17 +213,17 @@ public class CrawlService extends IntentService {
                     newLinks = page.findLinks();
                     newLinks.removeAll(mVisitedLinks);
                 } catch (Exception e) {
-                    Log.e("Crawler", e.toString());
+                    Logger.e("Crawler", e.toString());
                 }
             }
             newLinks = (newLinks == null) ? new ArrayList<URL>() : newLinks;
-            // Log.e("newLinks-"+mUrl.toString(), newLinks.toString());
+            // Logger.e("newLinks-"+mUrl.toString(), newLinks.toString());
 
             if (mPageDBTM.getRecordNum() > PAGE_TRANSACTION_BATCH_SIZE) {
                 try {
                     mPageDBTM.commitTransaction(true);
                 } catch (Exception e) {
-                    Log.e("Crawler", e.toString());
+                    Logger.e("Crawler", e.toString());
                 }
             }
 
@@ -232,7 +231,7 @@ public class CrawlService extends IntentService {
                 try {
                     mImageDBTM.commitTransaction(true);
                 } catch (Exception e) {
-                    Log.e("Crawler", e.toString());
+                    Logger.e("Crawler", e.toString());
                 }
             }
 
@@ -244,7 +243,7 @@ public class CrawlService extends IntentService {
                     try {
                         mCrawlExecutor.execute(new Crawler(link));
                     } catch (Exception e) {
-                        Log.e("Crawler", e.toString());
+                        Logger.e("Crawler", e.toString());
                     }
                 }
             }
@@ -265,7 +264,7 @@ public class CrawlService extends IntentService {
             }
             buffer.flush();
         } catch (Exception e) {
-            // Log.e("httpGetImage", e.toString());
+            Logger.e("httpGetImage", e.toString());
             return null;
         } finally {
             if (con != null) {
@@ -281,7 +280,7 @@ public class CrawlService extends IntentService {
             con = getConnectionFactory(url);
             return inputStream2String(con.getInputStream());
         } catch (Exception e) {
-            // Log.e("httpGetRawText", e.toString());
+            Logger.e("httpGetRawText", e.toString());
             return "";
         } finally {
             if (con != null) {
@@ -308,11 +307,11 @@ public class CrawlService extends IntentService {
             String str;
             while ((str = br.readLine()) != null) { stringBuilder.append(str); }
         } catch (Exception e) {
-            // Log.e("inputStream2String", e.toString());
+            Logger.e("inputStream2String", e.toString());
         } finally {
             try {
                 if (br != null) { br.close(); }
-            } catch (Exception e) { /* Log.e("inputStream2String", e.toString()); */ }
+            } catch (Exception e) { Logger.e("inputStream2String", e.toString());  }
         }
         return stringBuilder.toString();
     }

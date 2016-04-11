@@ -20,7 +20,6 @@ import android.os.Bundle;
 import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.RecyclerView;
 import android.support.v7.widget.Toolbar;
-import android.util.Log;
 import android.view.GestureDetector;
 import android.view.KeyEvent;
 import android.view.MenuItem;
@@ -178,7 +177,7 @@ public class MainActivity extends AppCompatActivity
                     intent.putExtra("receiver", mCrawlResultReceiver);
                     startService(intent);
                 } catch (Exception e) {
-                    Log.e("onCrawlPressed", e.toString());
+                    Logger.e("onCrawlPressed", e.toString());
                 }
                 break;
             case TAG_BACK_BUTTON:
@@ -226,8 +225,7 @@ public class MainActivity extends AppCompatActivity
             String msg;
             switch (resultData.getInt(CrawlService.CURRENT_STATUS)) {
                 case CrawlService.PAGES_COMPLETED:
-                    // Log.e("onResultReceive", "page ok");
-                    //modifyMenu();
+                    //Logger.e("onResultReceive", "page ok");
                     new SiteListCreator().execute();
                     msg = "Localizing pages completed.";
                     break;
@@ -416,7 +414,6 @@ public class MainActivity extends AppCompatActivity
         @Override
         protected void onPostExecute(ArrayList<SiteListItem> items) {
             modifyMenu(items);
-
         }
     };
 
@@ -447,7 +444,7 @@ public class MainActivity extends AppCompatActivity
                                         try {
                                             new AsyncWebsiteRemover().execute(url);
                                         } catch (Exception ex) {
-                                            Log.e("onLongPress", ex.toString());
+                                            Logger.e("onLongPress", ex.toString());
                                         }
                                     }
                                 },
@@ -469,7 +466,7 @@ public class MainActivity extends AppCompatActivity
                 removeWebsite(domain);
 
             } catch (Exception e) {
-                Log.e("onLongPress", e.toString());
+                Logger.e("onLongPress", e.toString());
             } finally {
                 return getMainPages();
             }
@@ -536,7 +533,7 @@ public class MainActivity extends AppCompatActivity
                 }
                 response = byteArray2WebResponse(url, byteData);
             } catch (Exception e) {
-                //Log.e("shouldIntercept", e.toString());
+                Logger.e("shouldIntercept", e.toString());
             } finally {
                 if (cursor != null) {
                     cursor.close();
@@ -551,7 +548,7 @@ public class MainActivity extends AppCompatActivity
                 return new WebResourceResponse(getMimeType(url),
                         "UTF-8", new ByteArrayInputStream(data));
             } catch (Exception e) {
-                //Log.e("WebViewClient", e.toString());
+                Logger.e("WebViewClient", e.toString());
             }
             return null;
         }

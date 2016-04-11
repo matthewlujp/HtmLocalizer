@@ -2,7 +2,6 @@ package com.example.luning.htmlocalizer;
 
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteStatement;
-import android.util.Log;
 
 import java.util.ArrayList;
 import java.util.concurrent.locks.Lock;
@@ -73,7 +72,7 @@ public class DBTransactionManager<T extends DBTransactionManager.Record> {
         try {
             mDatabase.setTransactionSuccessful();
         } catch (Exception e) {
-            Log.e("commitTransaction", e.toString());
+            Logger.e("commitTransaction", e.toString());
         } finally {
             on_transaction = false;
             mDatabase.endTransaction();

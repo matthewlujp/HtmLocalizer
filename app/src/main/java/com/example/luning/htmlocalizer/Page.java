@@ -1,6 +1,5 @@
 package com.example.luning.htmlocalizer;
 
-import android.util.Log;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
@@ -84,12 +83,12 @@ public class Page {
                     }
                 }
             } catch (MalformedURLException e) {
-                // Log.e("findLinks", matchedLink + " - " + e.toString());
+                Logger.e("findLinks", matchedLink + " - " + e.toString());
             } catch (Exception e) {
                 throw e;
             }
         }
-        //Log.e("findLinks-" + pageUrl.toString(), links.toString());
+        //Logger.e("findLinks-" + pageUrl.toString(), links.toString());
         return links;
     }
 
@@ -99,7 +98,6 @@ public class Page {
         if (pageUrl == null) {
             throw new NullPointerException("pageUrl is not set. extractDomain");
         }
-        String strUrl = pageUrl.toString();
         String path = pageUrl.getPath();
         int lastSlash = path.lastIndexOf('/');
         return pageUrl.getAuthority() + path.substring(0, lastSlash + 1);
@@ -134,7 +132,7 @@ public class Page {
         try {
             return cmpPage.getPageUrl().equals(this.pageUrl);
         } catch (NullPointerException e) {
-            // Log.e("equals", e.toString());
+            Logger.e("equals", e.toString());
             return false;
         }
     }
@@ -148,7 +146,7 @@ public class Page {
                 return false;
             }
         } catch (Exception e) {
-            // Log.e("domainEqual", e.toString());
+            Logger.e("domainEqual", e.toString());
             return false;
         }
     }
